@@ -1,0 +1,24 @@
+{
+  "name": "bookmark-brain-server",
+  "version": "0.1.0",
+  "description": "Server for bookmark-brain: handles X OAuth, Claude processing, and tunnel provisioning",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}
