@@ -24,7 +24,7 @@ app.use("/auth/x", xOauthRouter);
 app.use("/api/process", processRouter);
 app.use("/api/tunnel", tunnelRouter);
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
   console.log(`[server] X OAuth:    ${X_CLIENT_ID ? "enabled" : "DISABLED (set X_CLIENT_ID)"}`);
   console.log(`[server] Processing: ${ANTHROPIC_API_KEY ? "enabled" : "DISABLED (set ANTHROPIC_API_KEY)"}`);
