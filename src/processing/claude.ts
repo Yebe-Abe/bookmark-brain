@@ -1,7 +1,18 @@
 import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
-import { PROCESS_API_URL } from "../config.js";
+import path from "path";
+import { PROCESS_API_URL, STATE_DIR } from "../config.js";
 import type { KnowledgeItem, Concept, Entity } from "../storage/store.js";
+
+async function loadAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const auth = JSON.parse(await fs.readFile(path.join(STATE_DIR, "x-auth.json"), "utf8"));
+    if (auth.apiKey && auth.userId) {
+      return { "Authorization": `Bearer ${auth.apiKey}`, "X-User-Id": auth.userId };
+    }
+  } catch {}
+  return {};
+}
 
 const EXTRACT_PROMPT = `Analyze this content and extract structured knowledge.
 
@@ -54,9 +65,10 @@ async function processViaRemoteApi(payload: {
   imageBase64?: string;
   imageMimeType?: string;
 }): Promise<ExtractResult> {
+  const authHeaders = await loadAuthHeaders();
   const res = await fetch(`${PROCESS_API_URL}/api/process`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {

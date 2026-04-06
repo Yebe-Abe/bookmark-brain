@@ -1,7 +1,7 @@
 // Read-only MCP peephole. Only reads from DATA_ROOT. No writes. No path traversal.
-// This is the only thing exposed via the tunnel — audit it in 5 minutes.
+// Bearer token required on all MCP requests. Audit it in 5 minutes.
 
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import http from "http";
@@ -11,7 +11,25 @@ import { z } from "zod";
 
 // Hardcoded root. This server cannot read anything outside this directory.
 const DATA_ROOT = process.env.BOOKMARK_BRAIN_ROOT || path.join(process.env.HOME || "/tmp", ".bookmark-brain");
+const STATE_DIR = path.join(DATA_ROOT, "state");
 const PORT = Number(process.env.MCP_PORT || 9876);
+
+// Load MCP token from state dir (written during login)
+let MCP_TOKEN: string | null = null;
+async function loadMcpToken(): Promise<void> {
+  try {
+    const state = JSON.parse(await fs.readFile(path.join(STATE_DIR, "x-auth.json"), "utf8"));
+    MCP_TOKEN = state.mcpToken || null;
+  } catch { MCP_TOKEN = null; }
+}
+
+function checkAuth(req: http.IncomingMessage): boolean {
+  if (!MCP_TOKEN) return true; // No token configured = local-only mode, allow
+  const auth = String(req.headers.authorization || "");
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!token || token.length !== MCP_TOKEN.length) return false;
+  return timingSafeEqual(Buffer.from(token), Buffer.from(MCP_TOKEN));
+}
 
 // --- Safe read helpers (all paths validated against DATA_ROOT) ---
 
@@ -145,10 +163,12 @@ function createMcpServer(): McpServer {
 const sessions: Record<string, { server: McpServer; transport: StreamableHTTPServerTransport }> = {};
 
 export function startMcpServer(): http.Server {
+  loadMcpToken();
+
   const httpServer = http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id, Accept");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id, Accept, Authorization");
 
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
@@ -160,6 +180,9 @@ export function startMcpServer(): http.Server {
     if (req.url === "/health") { json(200, { ok: true }); return; }
 
     if (req.url !== "/mcp") { json(404, { error: "Not found" }); return; }
+
+    // Bearer token check on all MCP requests
+    if (!checkAuth(req)) { json(401, { error: "Unauthorized" }); return; }
 
     try {
       const sessionId = String(req.headers["mcp-session-id"] || "").trim();

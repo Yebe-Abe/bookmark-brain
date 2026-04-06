@@ -37,14 +37,25 @@ async function hasCloudflared(): Promise<boolean> {
  * Provision a named tunnel via the server.
  * Server creates the tunnel + DNS record, returns a token the client uses to run it.
  */
+async function loadAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const auth = JSON.parse(await fs.readFile(path.join(STATE_DIR, "x-auth.json"), "utf8"));
+    if (auth.apiKey && auth.userId) {
+      return { "Authorization": `Bearer ${auth.apiKey}`, "X-User-Id": auth.userId };
+    }
+  } catch {}
+  return {};
+}
+
 async function provisionTunnel(userId: string): Promise<TunnelState> {
   if (!PROCESS_API_URL) {
     throw new Error("BOOKMARK_BRAIN_API_URL required for tunnel provisioning");
   }
 
+  const authHeaders = await loadAuthHeaders();
   const res = await fetch(`${PROCESS_API_URL}/api/tunnel/provision`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ userId }),
   });
 

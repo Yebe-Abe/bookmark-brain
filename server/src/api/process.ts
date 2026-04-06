@@ -1,8 +1,13 @@
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { ANTHROPIC_API_KEY } from "../config.js";
+import { requireAuth, rateLimit } from "../auth/middleware.js";
 
 const router = Router();
+
+// Auth required + rate limit: 30 processing requests per minute per IP
+router.use(requireAuth);
+router.use(rateLimit(60_000, 30));
 
 const EXTRACT_PROMPT = `Analyze this content and extract structured knowledge.
 
@@ -25,89 +30,76 @@ Rules:
 - Only include entities you're confident about
 - For screenshots, extract any visible text, code, or key information into the summary`;
 
-function getClient(): Anthropic {
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY not configured on server");
-  }
-  return new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-}
+const MAX_TEXT_LENGTH = 10_000;
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB base64
 
 /**
  * POST /api/process
- * Body: { type: "bookmark" | "screenshot", text?: string, imageBase64?: string, imageMimeType?: string }
- * Returns: { title, summary, tags, concepts, entities, rawText? }
+ * Requires: Authorization: Bearer bbk_<key> + X-User-Id header
  */
 router.post("/", async (req: Request, res: Response) => {
   const { type, text, imageBase64, imageMimeType } = req.body as {
-    type: "bookmark" | "screenshot";
+    type?: string;
     text?: string;
     imageBase64?: string;
     imageMimeType?: string;
   };
 
-  if (!type) {
-    res.status(400).json({ error: "type required (bookmark or screenshot)" });
+  if (!type || (type !== "bookmark" && type !== "screenshot")) {
+    res.status(400).json({ error: "type must be 'bookmark' or 'screenshot'" });
     return;
   }
 
+  // Input validation
+  if (type === "bookmark") {
+    if (!text) { res.status(400).json({ error: "text required for bookmarks" }); return; }
+    if (text.length > MAX_TEXT_LENGTH) { res.status(400).json({ error: `text exceeds ${MAX_TEXT_LENGTH} chars` }); return; }
+  } else {
+    if (!imageBase64) { res.status(400).json({ error: "imageBase64 required for screenshots" }); return; }
+    if (imageBase64.length > MAX_IMAGE_SIZE) { res.status(400).json({ error: "image too large (max 5MB)" }); return; }
+    const validMime = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+    if (imageMimeType && !validMime.includes(imageMimeType)) {
+      res.status(400).json({ error: "invalid imageMimeType" });
+      return;
+    }
+  }
+
   try {
-    const client = getClient();
+    if (!ANTHROPIC_API_KEY) { res.status(500).json({ error: "Processing not configured" }); return; }
+    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+
     let response: Anthropic.Message;
 
     if (type === "bookmark") {
-      if (!text) {
-        res.status(400).json({ error: "text required for bookmark processing" });
-        return;
-      }
       response = await client.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
-        messages: [{
-          role: "user",
-          content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}`,
-        }],
+        messages: [{ role: "user", content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}` }],
       });
     } else {
-      if (!imageBase64) {
-        res.status(400).json({ error: "imageBase64 required for screenshot processing" });
-        return;
-      }
       response = await client.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
         messages: [{
           role: "user",
           content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: (imageMimeType || "image/png") as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
-                data: imageBase64,
-              },
-            },
-            {
-              type: "text",
-              text: `${EXTRACT_PROMPT}\n\nAlso include a "rawText" field with any text visible in the screenshot.`,
-            },
+            { type: "image", source: { type: "base64", media_type: (imageMimeType || "image/png") as "image/png", data: imageBase64! } },
+            { type: "text", text: `${EXTRACT_PROMPT}\n\nAlso include a "rawText" field with any text visible in the screenshot.` },
           ],
         }],
       });
     }
 
     const responseText = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === "text")
-      .map((block) => block.text)
-      .join("");
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text).join("");
 
-    // Parse and forward the result
     const cleaned = responseText.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(cleaned);
-    res.json(parsed);
+    res.json(JSON.parse(cleaned));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[process] error:", message);
-    res.status(500).json({ error: message });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[process] error:", msg);
+    res.status(500).json({ error: "Processing failed" });
   }
 });
 
