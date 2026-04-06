@@ -9,13 +9,29 @@ import { startProcessingLoop } from "./processing/processor.js";
 import { startMcpServer } from "./mcp/server.js";
 import { startTunnel } from "./tunnel.js";
 import { login } from "./auth.js";
+import { installDaemon, uninstallDaemon, daemonStatus } from "./daemon.js";
 
 const command = process.argv[2];
+const commands: Record<string, () => Promise<void>> = {
+  login: () => login(),
+  config: () => printConfig(),
+  start: () => installDaemon(),
+  stop: () => uninstallDaemon(),
+  status: () => daemonStatus(),
+};
 
-if (command === "login") {
-  login().catch((err) => { console.error(err); process.exit(1); });
-} else if (command === "config") {
-  printConfig().catch((err) => { console.error(err); process.exit(1); });
+if (command && commands[command]) {
+  commands[command]!().catch((err) => { console.error(err); process.exit(1); });
+} else if (command === "help" || command === "--help") {
+  console.log(`Usage: bookmark-brain <command>
+
+Commands:
+  login    Sign in with X (opens browser)
+  start    Install and start background daemon
+  stop     Stop and uninstall background daemon
+  status   Check if daemon is running
+  config   Print MCP config for Claude
+  (none)   Run in foreground (for debugging)`);
 } else {
   main().catch((err) => { console.error("[bookmark-brain] fatal:", err); process.exit(1); });
 }

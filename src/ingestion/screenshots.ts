@@ -32,8 +32,8 @@ async function runOsxphotosExport(fromDate?: string): Promise<void> {
   const args = [
     "export", exportDir,
     "--screenshot",
-    "--update",        // skip already-exported photos
-    "--convert-to-jpeg", // normalize HEIC to JPEG
+    "--update",
+    "--convert-to-jpeg",
   ];
 
   if (fromDate) {
@@ -59,18 +59,12 @@ async function runOsxphotosExport(fromDate?: string): Promise<void> {
   });
 }
 
-/**
- * Get the date string for N months ago (YYYY-MM-DD).
- */
 function monthsAgo(n: number): string {
   const d = new Date();
   d.setMonth(d.getMonth() - n);
   return d.toISOString().split("T")[0]!;
 }
 
-/**
- * Check if onboarding export has already been done.
- */
 async function hasOnboarded(): Promise<boolean> {
   try {
     await fs.access(path.join(STATE_DIR, "screenshots-onboarded"));
@@ -112,9 +106,6 @@ async function ingestImageFile(filePath: string): Promise<boolean> {
   return false;
 }
 
-/**
- * Scan a directory for images and ingest them.
- */
 async function ingestDir(dir: string): Promise<number> {
   let count = 0;
   try {
@@ -148,7 +139,6 @@ export async function startScreenshots(): Promise<void> {
   if (useOsxphotos) {
     console.log("[screenshots] osxphotos detected — pulling from Photos library");
 
-    // Onboarding: pull last 2 months
     if (!(await hasOnboarded())) {
       console.log(`[screenshots] onboarding: importing last ${ONBOARD_MONTHS} months of screenshots...`);
       try {
@@ -162,7 +152,6 @@ export async function startScreenshots(): Promise<void> {
       }
     }
 
-    // Ongoing poll for new screenshots
     setInterval(async () => {
       try {
         await runOsxphotosExport();
@@ -179,13 +168,12 @@ export async function startScreenshots(): Promise<void> {
     }
   }
 
-  // Always watch inbox for manual drops (works on all platforms)
   console.log(`[screenshots] watching ${INBOX_DIR}`);
   const watcher = watch(INBOX_DIR, {
     ignoreInitial: false,
     ignored: (p) => path.basename(p).startsWith("."),
     awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
-    depth: 0, // don't recurse into .osxphotos-export subdir from watcher
+    depth: 0,
   });
 
   watcher.on("add", (filePath) => { ingestImageFile(filePath); });
