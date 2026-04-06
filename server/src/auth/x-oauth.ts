@@ -4,22 +4,27 @@ import { X_CLIENT_ID, X_CLIENT_SECRET, SERVER_URL } from "../config.js";
 
 const router = Router();
 
-// In-memory store for pending OAuth flows (code_verifier keyed by state)
-// In production, use Redis or a database with TTL
+// Pending OAuth flows: state → { codeVerifier, createdAt }
 const pendingFlows = new Map<string, { codeVerifier: string; createdAt: number }>();
 
-// Clean up expired flows every 5 minutes
+// Completed flows: state → tokens (client polls for these)
+const completedFlows = new Map<string, { tokens: unknown; createdAt: number }>();
+
+// Clean up expired entries every 5 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [state, flow] of pendingFlows) {
     if (now - flow.createdAt > 10 * 60 * 1000) pendingFlows.delete(state);
   }
+  for (const [state, flow] of completedFlows) {
+    if (now - flow.createdAt > 10 * 60 * 1000) completedFlows.delete(state);
+  }
 }, 5 * 60 * 1000);
 
 /**
  * GET /auth/x/start
- * Returns a URL the client should open in the user's browser.
- * Uses OAuth 2.0 PKCE so the client never sees our client_secret.
+ * Client calls this, gets back { authorizeUrl, state }.
+ * Client opens authorizeUrl in user's browser, then polls /auth/x/status?state=...
  */
 router.get("/start", (_req: Request, res: Response) => {
   if (!X_CLIENT_ID) {
@@ -46,14 +51,13 @@ router.get("/start", (_req: Request, res: Response) => {
     code_challenge_method: "S256",
   });
 
-  const authorizeUrl = `https://x.com/i/oauth2/authorize?${params}`;
-  res.json({ authorizeUrl, state });
+  res.json({ authorizeUrl: `https://x.com/i/oauth2/authorize?${params}`, state });
 });
 
 /**
  * GET /auth/x/callback
- * X redirects here after the user authorizes.
- * Exchanges the code for tokens and returns them to the client.
+ * X redirects here after user authorizes. Exchanges code for tokens,
+ * stores them for the client to pick up via /auth/x/status.
  */
 router.get("/callback", async (req: Request, res: Response) => {
   const code = String(req.query.code || "");
@@ -100,7 +104,6 @@ router.get("/callback", async (req: Request, res: Response) => {
       expires_in: number;
     };
 
-    // Fetch the user's ID and username
     const meResponse = await fetch("https://api.x.com/2/users/me", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
@@ -113,21 +116,57 @@ router.get("/callback", async (req: Request, res: Response) => {
       username = me.data.username;
     }
 
-    // Return an HTML page that sends the tokens back to the app via a deep link or displays them
+    // Store for client to pick up
+    completedFlows.set(state, {
+      tokens: {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresIn: tokens.expires_in,
+        expiresAt: Date.now() + tokens.expires_in * 1000,
+        userId,
+        username,
+      },
+      createdAt: Date.now(),
+    });
+
     res.send(`<!DOCTYPE html>
 <html>
 <head><title>bookmark-brain</title></head>
-<body style="font-family: system-ui; max-width: 500px; margin: 80px auto; text-align: center;">
-  <h2>Connected to X as @${username}</h2>
-  <p>Copy this token back to the bookmark-brain app:</p>
-  <pre style="background: #f0f0f0; padding: 16px; border-radius: 8px; word-break: break-all; text-align: left; font-size: 12px;">${JSON.stringify({ accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresIn: tokens.expires_in, userId, username })}</pre>
-  <p style="color: #888; font-size: 14px;">You can close this window after copying.</p>
+<body style="font-family: system-ui; max-width: 400px; margin: 80px auto; text-align: center;">
+  <h2>Connected as @${username}</h2>
+  <p>You can close this window. The app will pick up your credentials automatically.</p>
 </body>
 </html>`);
   } catch (err) {
     console.error("[x-oauth] error:", err);
     res.status(500).send("Something went wrong. Please try again.");
   }
+});
+
+/**
+ * GET /auth/x/status?state=...
+ * Client polls this after opening the browser. Returns tokens once the user authorizes.
+ */
+router.get("/status", (req: Request, res: Response) => {
+  const state = String(req.query.state || "");
+  if (!state) {
+    res.status(400).json({ error: "state required" });
+    return;
+  }
+
+  const completed = completedFlows.get(state);
+  if (completed) {
+    completedFlows.delete(state);
+    res.json({ status: "complete", ...completed.tokens as object });
+    return;
+  }
+
+  if (pendingFlows.has(state)) {
+    res.json({ status: "pending" });
+    return;
+  }
+
+  res.json({ status: "expired" });
 });
 
 /**

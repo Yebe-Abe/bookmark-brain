@@ -7,6 +7,15 @@ import { watchScreenshots } from "./ingestion/screenshots.js";
 import { startProcessingLoop } from "./processing/processor.js";
 import { startMcpServer } from "./mcp/server.js";
 import { startTunnel } from "./tunnel.js";
+import { login } from "./auth.js";
+
+// Handle subcommands: bookmark-brain login
+const command = process.argv[2];
+if (command === "login") {
+  login().catch((err) => { console.error(err); process.exit(1); });
+} else {
+  main().catch((err) => { console.error("[bookmark-brain] fatal:", err); process.exit(1); });
+}
 
 async function main() {
   console.log(`[bookmark-brain] data root: ${DATA_ROOT}`);
@@ -73,7 +82,3 @@ async function main() {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((err) => {
-  console.error("[bookmark-brain] fatal:", err);
-  process.exit(1);
-});
