@@ -37,7 +37,8 @@ iCloud Photos ─→│                      │ ───→ │  Claude proces
 ```bash
 git clone https://github.com/you/bookmark-brain
 cd bookmark-brain
-npm install && npm run build
+npm install && npm run setup
+source ~/.zshrc  # if first time, to pick up PATH change
 ```
 
 ### First-time setup

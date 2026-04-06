@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "setup": "npm run build && node scripts/install-cli.js"
   },
   "engines": {
     "node": ">=18"
