@@ -44,7 +44,7 @@ async function printConfig(): Promise<void> {
   const tunnelFile = path.join(STATE_DIR, "tunnel.json");
 
   let mcpToken = "";
-  let mcpUrl = "http://127.0.0.1:9876/mcp";
+  let tunnelUrl = "";
 
   try {
     const auth = JSON.parse(await fs.readFile(authFile, "utf8"));
@@ -53,7 +53,7 @@ async function printConfig(): Promise<void> {
 
   try {
     const tunnel = JSON.parse(await fs.readFile(tunnelFile, "utf8"));
-    if (tunnel.mcpEndpoint) mcpUrl = tunnel.mcpEndpoint;
+    if (tunnel.mcpEndpoint) tunnelUrl = tunnel.mcpEndpoint;
   } catch {}
 
   if (!mcpToken) {
@@ -61,22 +61,23 @@ async function printConfig(): Promise<void> {
     process.exit(1);
   }
 
-  const config = {
-    mcpServers: {
-      "bookmark-brain": {
-        url: mcpUrl,
-        headers: {
-          Authorization: `Bearer ${mcpToken}`,
-        },
-      },
-    },
-  };
+  const localUrl = `http://127.0.0.1:9876/mcp`;
+  const mcpUrl = tunnelUrl || localUrl;
+  const serverEntry = { url: mcpUrl, headers: { Authorization: `Bearer ${mcpToken}` } };
 
-  console.log("Add this to your Claude Desktop or Claude Code MCP config:\n");
-  console.log(JSON.stringify(config, null, 2));
+  console.log(`\n  For Claude Code, run this command:\n`);
+  console.log(`    claude mcp add-json bookmark-brain '${JSON.stringify(serverEntry)}'\n`);
 
-  console.log("\nClaude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json");
-  console.log("Claude Code:    claude mcp add-json bookmark-brain '" + JSON.stringify(config.mcpServers["bookmark-brain"]) + "'");
+  console.log(`  For Claude Desktop, add to ~/Library/Application Support/Claude/claude_desktop_config.json:\n`);
+  console.log(JSON.stringify({ mcpServers: { "bookmark-brain": serverEntry } }, null, 2));
+
+  if (!tunnelUrl) {
+    console.log(`\n  Note: using local URL (${localUrl}).`);
+    console.log(`  This works when Claude is on the same machine.`);
+    console.log(`  For remote access, run: bookmark-brain start (with TUNNEL_MODE=named in ~/.bookmark-brain/config)`);
+  }
+
+  console.log("");
 }
 
 async function main() {

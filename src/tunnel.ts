@@ -4,6 +4,7 @@ import path from "path";
 import { MCP_PORT, STATE_DIR, PROCESS_API_URL } from "./config.js";
 
 const TUNNEL_STATE_FILE = path.join(STATE_DIR, "tunnel.json");
+const AUTH_FILE = path.join(STATE_DIR, "x-auth.json");
 
 interface TunnelState {
   tunnelToken: string;
@@ -11,18 +12,25 @@ interface TunnelState {
   mcpEndpoint: string;
 }
 
+interface AuthState {
+  apiKey?: string;
+  userId?: string;
+  subdomain?: string;
+}
+
 async function loadTunnelState(): Promise<TunnelState | null> {
-  try {
-    const text = await fs.readFile(TUNNEL_STATE_FILE, "utf8");
-    return JSON.parse(text) as TunnelState;
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(await fs.readFile(TUNNEL_STATE_FILE, "utf8")); }
+  catch { return null; }
 }
 
 async function saveTunnelState(state: TunnelState): Promise<void> {
   await fs.mkdir(STATE_DIR, { recursive: true });
   await fs.writeFile(TUNNEL_STATE_FILE, JSON.stringify(state, null, 2) + "\n", "utf8");
+}
+
+async function loadAuth(): Promise<AuthState | null> {
+  try { return JSON.parse(await fs.readFile(AUTH_FILE, "utf8")); }
+  catch { return null; }
 }
 
 async function hasCloudflared(): Promise<boolean> {
@@ -33,53 +41,28 @@ async function hasCloudflared(): Promise<boolean> {
   });
 }
 
-/**
- * Provision a named tunnel via the server.
- * Server creates the tunnel + DNS record, returns a token the client uses to run it.
- */
-async function loadAuthHeaders(): Promise<Record<string, string>> {
-  try {
-    const auth = JSON.parse(await fs.readFile(path.join(STATE_DIR, "x-auth.json"), "utf8"));
-    if (auth.apiKey && auth.userId) {
-      return { "Authorization": `Bearer ${auth.apiKey}`, "X-User-Id": auth.userId };
-    }
-  } catch {}
-  return {};
-}
-
-async function provisionTunnel(userId: string): Promise<TunnelState> {
-  if (!PROCESS_API_URL) {
-    throw new Error("BOOKMARK_BRAIN_API_URL required for tunnel provisioning");
-  }
-
-  const authHeaders = await loadAuthHeaders();
+async function provisionTunnel(auth: AuthState): Promise<TunnelState> {
   const res = await fetch(`${PROCESS_API_URL}/api/tunnel/provision`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders },
-    body: JSON.stringify({ userId }),
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${auth.apiKey}`,
+      "X-User-Id": auth.userId!,
+    },
+    body: JSON.stringify({ userId: auth.userId }),
   });
 
   if (!res.ok) {
     throw new Error(`Tunnel provisioning failed: ${res.status} ${await res.text()}`);
   }
 
-  const data = (await res.json()) as { tunnelToken: string; hostname: string; mcpEndpoint: string };
-  const state: TunnelState = {
-    tunnelToken: data.tunnelToken,
-    hostname: data.hostname,
-    mcpEndpoint: data.mcpEndpoint,
-  };
-
-  await saveTunnelState(state);
-  return state;
+  const data = (await res.json()) as TunnelState;
+  await saveTunnelState(data);
+  return data;
 }
 
-/**
- * Run the tunnel using a token from the server.
- * `cloudflared tunnel run --token <token>` — no local cloudflared login needed.
- */
-function runTokenTunnel(token: string): ChildProcess {
-  console.log(`[tunnel] starting named tunnel...`);
+function runTokenTunnel(token: string, hostname: string): ChildProcess {
+  console.log(`[tunnel] connecting ${hostname}...`);
   const proc = spawn("cloudflared", ["tunnel", "run", "--token", token], {
     stdio: "inherit",
   });
@@ -89,71 +72,45 @@ function runTokenTunnel(token: string): ChildProcess {
 }
 
 /**
- * Quick tunnel fallback — no server needed, but URL changes each restart.
- */
-function runQuickTunnel(): ChildProcess {
-  console.log(`[tunnel] starting quick tunnel → http://127.0.0.1:${MCP_PORT}`);
-  const proc = spawn("cloudflared", ["tunnel", "--url", `http://127.0.0.1:${MCP_PORT}`], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  let urlLogged = false;
-  proc.stderr?.on("data", (data: Buffer) => {
-    const line = data.toString();
-    if (!urlLogged) {
-      const match = line.match(/https:\/\/[^\s]+\.trycloudflare\.com/);
-      if (match) {
-        console.log(`[tunnel] quick tunnel: ${match[0]}/mcp`);
-        urlLogged = true;
-      }
-    }
-  });
-
-  proc.on("error", (err) => console.error("[tunnel] error:", err.message));
-  proc.on("close", (code) => console.log(`[tunnel] exited with code ${code}`));
-  return proc;
-}
-
-/**
  * Start the Cloudflare tunnel.
  *
- * TUNNEL_MODE:
- * - "named": stable URL via server-provisioned tunnel (requires BOOKMARK_BRAIN_API_URL)
- * - "quick": ephemeral URL, zero setup
- * - "off": no tunnel (default)
+ * Automatic: if the user is logged in and cloudflared is installed,
+ * the tunnel is provisioned and started with no extra config needed.
+ *
+ * Set TUNNEL_MODE=off to disable.
  */
 export async function startTunnel(): Promise<ChildProcess | null> {
-  const mode = process.env.TUNNEL_MODE || "off";
+  if (process.env.TUNNEL_MODE === "off") {
+    return null;
+  }
 
-  if (mode === "off") {
-    console.log("[tunnel] disabled (set TUNNEL_MODE=named or TUNNEL_MODE=quick)");
+  const auth = await loadAuth();
+  if (!auth?.apiKey || !auth?.userId) {
+    console.log("[tunnel] not logged in — skipping tunnel (run: bookmark-brain login)");
     return null;
   }
 
   if (!(await hasCloudflared())) {
-    console.log("[tunnel] cloudflared not found — install: brew install cloudflared");
+    console.log("[tunnel] cloudflared not found — install with: brew install cloudflared");
+    console.log("[tunnel] MCP server is still available locally at http://127.0.0.1:9876/mcp");
     return null;
   }
 
-  if (mode === "quick") {
-    return runQuickTunnel();
-  }
-
-  // Named tunnel mode — get or create via server
+  // Use existing tunnel or provision a new one
   let state = await loadTunnelState();
 
   if (!state) {
-    const userId = process.env.BOOKMARK_BRAIN_USER_ID;
-    if (!userId) {
-      console.log("[tunnel] no tunnel credentials found. Set BOOKMARK_BRAIN_USER_ID and BOOKMARK_BRAIN_API_URL to provision one.");
+    console.log("[tunnel] provisioning tunnel via server...");
+    try {
+      state = await provisionTunnel(auth);
+      console.log(`[tunnel] provisioned: ${state.mcpEndpoint}`);
+    } catch (err) {
+      console.error("[tunnel] provisioning failed:", (err as Error).message);
+      console.log("[tunnel] MCP server is still available locally at http://127.0.0.1:9876/mcp");
       return null;
     }
-
-    console.log("[tunnel] provisioning named tunnel via server...");
-    state = await provisionTunnel(userId);
-    console.log(`[tunnel] provisioned: ${state.mcpEndpoint}`);
   }
 
   console.log(`[tunnel] MCP endpoint: ${state.mcpEndpoint}`);
-  return runTokenTunnel(state.tunnelToken);
+  return runTokenTunnel(state.tunnelToken, state.hostname);
 }

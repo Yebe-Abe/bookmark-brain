@@ -45,13 +45,10 @@ export async function login(): Promise<void> {
       const { status: _, ...creds } = data;
       await fs.writeFile(AUTH_FILE, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 });
 
-      console.log(`[login] authenticated as @${data.username}`);
-      console.log(`[login] API key and MCP token saved`);
-
-      // Show MCP config hint if tunnel is set up
-      if (data.subdomain) {
-        console.log(`[login] your subdomain: ${data.subdomain}`);
-      }
+      console.log(`\n  Logged in as @${data.username}\n`);
+      console.log(`  Next steps:`);
+      console.log(`    bookmark-brain start    Start the background daemon`);
+      console.log(`    bookmark-brain config   Get your Claude MCP config\n`);
 
       return;
     }

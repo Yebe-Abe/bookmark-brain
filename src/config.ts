@@ -30,4 +30,5 @@ export const X_POLL_INTERVAL_MS = 60_000;
 export const PROCESS_INTERVAL_MS = 5_000;
 export const SCREENSHOT_POLL_INTERVAL_MS = 60_000;
 
-export const PROCESS_API_URL = process.env.BOOKMARK_BRAIN_API_URL || null;
+export const DEFAULT_API_URL = "https://basis-tech-context-production.up.railway.app";
+export const PROCESS_API_URL = process.env.BOOKMARK_BRAIN_API_URL || DEFAULT_API_URL;
