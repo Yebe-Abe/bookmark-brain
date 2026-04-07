@@ -58,31 +58,6 @@ Index files for browsing:
 - `~/.bookmark-brain/tags/index.txt` — all tags with counts
 - `~/.bookmark-brain/tags/{tag}.txt` — items with that tag
 
-## Server deployment (for operators)
-
-The server handles X OAuth and Claude processing so end users don't need API keys.
-
-### Deploy to Railway
-
-1. Push to GitHub
-2. New Project → Deploy from GitHub → set Root Directory to `server`
-3. Set environment variables:
-
-| Variable | Description |
-|---|---|
-| `SERVER_SECRET` | Random hex string (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`) |
-| `SERVER_URL` | Your Railway public URL |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
-| `X_CLIENT_ID` | From X developer portal |
-| `X_CLIENT_SECRET` | From X developer portal |
-
-### Verify
-
-```bash
-curl https://your-server.up.railway.app/health
-# → {"ok":true,"services":{"xOauth":true,"processing":true}}
-```
-
 ## License
 
 MIT
