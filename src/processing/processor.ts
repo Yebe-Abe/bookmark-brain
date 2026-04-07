@@ -3,33 +3,33 @@ import {
   getUnprocessedItems,
   saveProcessedItem,
   markItemError,
-  type KnowledgeItem,
+  type PendingItem,
 } from "../storage/store.js";
 import { processBookmark } from "./claude.js";
 
-async function processOne(item: KnowledgeItem): Promise<void> {
+async function processOne(item: PendingItem): Promise<void> {
   console.log(`[processor] processing ${item.id}`);
 
   try {
-    if (item.rawText) {
-      try {
-        const parsed = JSON.parse(item.rawText) as { text?: string };
-        if (parsed.text) item.rawText = parsed.text;
-      } catch {
-        // rawText is already plain text
-      }
+    // Parse raw text from stored JSON
+    let text = item.rawText;
+    try {
+      const parsed = JSON.parse(text) as { text?: string };
+      if (parsed.text) text = parsed.text;
+    } catch {
+      // already plain text
     }
 
-    const result = await processBookmark(item);
-    item.title = result.title;
-    item.summary = result.summary;
-    item.useCase = result.useCase || "";
-    item.tags = result.tags;
-    item.concepts = result.concepts;
-    item.entities = result.entities;
-    await saveProcessedItem(item);
+    const result = await processBookmark(text);
+    await saveProcessedItem(item, {
+      ...result,
+      rawText: text,
+      author: item.author,
+      url: item.url,
+      createdAt: item.createdAt,
+    });
 
-    console.log(`[processor] done: ${item.id} → "${item.title}"`);
+    console.log(`[processor] done: ${item.id} → "${result.title}"`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[processor] error on ${item.id}: ${message}`);

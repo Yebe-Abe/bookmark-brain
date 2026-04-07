@@ -1,34 +1,17 @@
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
-import { DATA_ROOT, ITEMS_DIR, TAGS_DIR } from "../config.js";
+import { DATA_ROOT, BOOKMARKS_DIR, TAGS_DIR, STATE_DIR } from "../config.js";
 
 // ----- Types -----
 
-export interface KnowledgeItem {
+export interface PendingItem {
   id: string;
-  source: "x_bookmark";
   sourceId: string;
-  contentHash: string;
-
-  // Processed fields (filled after Claude processing)
-  title: string;
-  summary: string;
-  useCase: string;
-  tags: string[];
-  concepts: Concept[];
-  entities: Entity[];
-  rawText: string | null;
-
-  // Source metadata
+  rawText: string;
   author: string | null;
   url: string | null;
-
-  // Timestamps
   createdAt: string;
-  ingestedAt: string;
-  processedAt: string | null;
-  status: "ingested" | "processing" | "processed" | "error";
 }
 
 export interface Concept {
@@ -43,43 +26,77 @@ export interface Entity {
   handle?: string;
 }
 
+export interface ProcessedItem {
+  title: string;
+  summary: string;
+  useCase: string;
+  tags: string[];
+  concepts: Concept[];
+  entities: Entity[];
+  rawText: string;
+  author: string | null;
+  url: string | null;
+  createdAt: string;
+}
+
 // ----- Helpers -----
 
-function monthKey(isoDate: string): string {
-  return isoDate.slice(0, 7);
-}
-
-function itemDirName(hash: string): string {
-  return `bk-${hash.slice(0, 12)}`;
-}
+const PENDING_FILE = path.join(STATE_DIR, "pending.json");
+const SEEN_FILE = path.join(STATE_DIR, "seen.json");
 
 export function contentHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
+function slugify(text: string, maxLen = 40): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, maxLen)
+    .replace(/-$/, "");
+}
+
+function monthKey(isoDate: string): string {
+  return isoDate.slice(0, 7);
+}
+
 async function readJsonSafe<T>(filePath: string): Promise<T | null> {
   try {
-    const text = await fs.readFile(filePath, "utf8");
-    return JSON.parse(text) as T;
+    return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
   } catch {
     return null;
   }
 }
 
-async function readTextSafe(filePath: string): Promise<string> {
-  try {
-    return await fs.readFile(filePath, "utf8");
-  } catch {
-    return "";
-  }
+async function writeJson(filePath: string, data: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
-// ----- Write operations -----
+// ----- Seen set (dedup) -----
 
-/**
- * Ingest a new item. Writes raw content + initial meta.json with status="ingested".
- * Returns the item if new, null if duplicate.
- */
+async function loadSeen(): Promise<Set<string>> {
+  const arr = await readJsonSafe<string[]>(SEEN_FILE);
+  return new Set(arr || []);
+}
+
+async function saveSeen(seen: Set<string>): Promise<void> {
+  await writeJson(SEEN_FILE, [...seen]);
+}
+
+// ----- Pending queue -----
+
+async function loadPending(): Promise<PendingItem[]> {
+  return (await readJsonSafe<PendingItem[]>(PENDING_FILE)) || [];
+}
+
+async function savePending(items: PendingItem[]): Promise<void> {
+  await writeJson(PENDING_FILE, items);
+}
+
+// ----- Public: ingest -----
+
 export async function ingestItem(opts: {
   source: "x_bookmark";
   sourceId: string;
@@ -87,148 +104,117 @@ export async function ingestItem(opts: {
   author?: string;
   url?: string;
   createdAt?: string;
-}): Promise<KnowledgeItem | null> {
+}): Promise<PendingItem | null> {
   const hash = contentHash(opts.rawContent);
-  const dirName = itemDirName(hash);
-  const month = monthKey(opts.createdAt || new Date().toISOString());
-  const itemDir = path.join(ITEMS_DIR, month, dirName);
 
-  // Dedup: if directory already exists, skip
-  try {
-    await fs.access(itemDir);
-    return null; // already ingested
-  } catch {
-    // doesn't exist, proceed
-  }
+  const seen = await loadSeen();
+  if (seen.has(hash)) return null;
 
-  await fs.mkdir(itemDir, { recursive: true });
-  await fs.writeFile(path.join(itemDir, "raw.json"), opts.rawContent, "utf8");
+  seen.add(hash);
+  await saveSeen(seen);
 
-  const item: KnowledgeItem = {
-    id: dirName,
-    source: opts.source,
+  const item: PendingItem = {
+    id: `bk-${hash.slice(0, 12)}`,
     sourceId: opts.sourceId,
-    contentHash: hash,
-    title: "",
-    summary: "",
-    useCase: "",
-    tags: [],
-    concepts: [],
-    entities: [],
     rawText: opts.rawContent,
     author: opts.author || null,
     url: opts.url || null,
     createdAt: opts.createdAt || new Date().toISOString(),
-    ingestedAt: new Date().toISOString(),
-    processedAt: null,
-    status: "ingested",
   };
 
-  await fs.writeFile(
-    path.join(itemDir, "meta.json"),
-    JSON.stringify(item, null, 2) + "\n",
-    "utf8"
-  );
+  const pending = await loadPending();
+  pending.push(item);
+  await savePending(pending);
 
   return item;
 }
 
-/**
- * Save processed results back to an item and update all indexes.
- */
-export async function saveProcessedItem(item: KnowledgeItem): Promise<void> {
-  const month = monthKey(item.createdAt);
-  const itemDir = path.join(ITEMS_DIR, month, item.id);
+// ----- Public: processing -----
 
-  item.processedAt = new Date().toISOString();
-  item.status = "processed";
+export async function getUnprocessedItems(): Promise<PendingItem[]> {
+  return loadPending();
+}
+
+export async function saveProcessedItem(
+  pending: PendingItem,
+  result: ProcessedItem,
+): Promise<void> {
+  const month = monthKey(pending.createdAt);
+  const monthDir = path.join(BOOKMARKS_DIR, month);
+  await fs.mkdir(monthDir, { recursive: true });
+
+  // Filename: slug from title + short hash for uniqueness
+  const slug = slugify(result.title) || "bookmark";
+  const shortHash = pending.id.slice(3, 9); // 6 chars from the hash
+  const filename = `${slug}-${shortHash}.md`;
 
   await fs.writeFile(
-    path.join(itemDir, "meta.json"),
-    JSON.stringify(item, null, 2) + "\n",
-    "utf8"
+    path.join(monthDir, filename),
+    renderMarkdown(pending, result),
+    "utf8",
   );
 
-  // Write markdown file
-  await fs.writeFile(
-    path.join(itemDir, "bookmark.md"),
-    renderMarkdown(item),
-    "utf8"
-  );
+  // Remove from pending queue
+  const items = await loadPending();
+  await savePending(items.filter((i) => i.id !== pending.id));
 
-  // Update all indexes
-  await updateMonthIndex(month);
-  await updateTagIndexes(item);
+  // Update indexes
+  await updateTagIndexes(result, filename, month);
   await updateMasterIndex();
 }
 
-/**
- * Mark an item as errored so it doesn't block the queue.
- */
-export async function markItemError(item: KnowledgeItem, error: string): Promise<void> {
-  const month = monthKey(item.createdAt);
-  const itemDir = path.join(ITEMS_DIR, month, item.id);
-  item.status = "error";
-  (item as KnowledgeItem & { error?: string }).error = error;
-  await fs.writeFile(
-    path.join(itemDir, "meta.json"),
-    JSON.stringify(item, null, 2) + "\n",
-    "utf8"
-  );
+export async function markItemError(pending: PendingItem, error: string): Promise<void> {
+  console.error(`[store] error on ${pending.id}: ${error}`);
+  // Remove from pending so it doesn't block the queue
+  const items = await loadPending();
+  await savePending(items.filter((i) => i.id !== pending.id));
 }
 
 // ----- Markdown rendering -----
 
-function renderMarkdown(item: KnowledgeItem): string {
+function renderMarkdown(pending: PendingItem, result: ProcessedItem): string {
   const lines: string[] = [];
 
-  // YAML frontmatter
   lines.push("---");
-  lines.push(`title: ${JSON.stringify(item.title)}`);
-  lines.push(`date: ${item.createdAt.split("T")[0]}`);
-  if (item.author) lines.push(`author: ${JSON.stringify(item.author)}`);
-  if (item.url) lines.push(`url: ${JSON.stringify(item.url)}`);
-  if (item.tags.length) lines.push(`tags: [${item.tags.join(", ")}]`);
+  lines.push(`title: ${JSON.stringify(result.title)}`);
+  lines.push(`date: ${pending.createdAt.split("T")[0]}`);
+  if (pending.author) lines.push(`author: ${JSON.stringify(pending.author)}`);
+  if (pending.url) lines.push(`url: ${JSON.stringify(pending.url)}`);
+  if (result.tags.length) lines.push(`tags: [${result.tags.join(", ")}]`);
   lines.push("---");
   lines.push("");
 
-  // Title
-  lines.push(`# ${item.title}`);
+  lines.push(`# ${result.title}`);
   lines.push("");
 
-  // Original tweet as blockquote
-  if (item.rawText) {
-    for (const line of item.rawText.split("\n")) {
+  if (result.rawText) {
+    for (const line of result.rawText.split("\n")) {
       lines.push(`> ${line}`);
     }
     lines.push("");
   }
 
-  // Summary
-  if (item.summary) {
-    lines.push(item.summary);
+  if (result.summary) {
+    lines.push(result.summary);
     lines.push("");
   }
 
-  // Use case
-  if (item.useCase) {
-    lines.push(`**Apply when:** ${item.useCase}`);
+  if (result.useCase) {
+    lines.push(`**Apply when:** ${result.useCase}`);
     lines.push("");
   }
 
-  // Concepts
-  if (item.concepts.length) {
+  if (result.concepts.length) {
     lines.push("## Concepts");
-    for (const c of item.concepts) {
+    for (const c of result.concepts) {
       lines.push(`- ${c.name} (${c.category})`);
     }
     lines.push("");
   }
 
-  // Entities
-  if (item.entities.length) {
+  if (result.entities.length) {
     lines.push("## Entities");
-    for (const e of item.entities) {
+    for (const e of result.entities) {
       const handle = e.handle ? ` ${e.handle}` : "";
       lines.push(`- ${e.name}${handle} (${e.type})`);
     }
@@ -240,131 +226,154 @@ function renderMarkdown(item: KnowledgeItem): string {
 
 // ----- Index generation -----
 
-async function updateMonthIndex(month: string): Promise<void> {
-  const monthDir = path.join(ITEMS_DIR, month);
-  const items = await loadItemsInDir(monthDir);
-
-  const lines = items
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((item) => formatIndexLine(item));
-
-  await fs.writeFile(
-    path.join(monthDir, "index.txt"),
-    lines.join("\n") + "\n",
-    "utf8"
-  );
+interface IndexEntry {
+  title: string;
+  date: string;
+  author: string;
+  tags: string[];
+  summary: string;
+  useCase: string;
+  file: string;
 }
 
-async function updateTagIndexes(item: KnowledgeItem): Promise<void> {
-  await fs.mkdir(TAGS_DIR, { recursive: true });
-
-  for (const tag of item.tags) {
-    const tagFile = path.join(TAGS_DIR, `${sanitizeFilename(tag)}.txt`);
-    const existing = await readTextSafe(tagFile);
-
-    if (existing.includes(item.id)) continue;
-
-    const line = formatIndexLine(item);
-    await fs.appendFile(tagFile, line + "\n", "utf8");
+function parseFrontmatter(content: string): Record<string, string> {
+  const fm: Record<string, string> = {};
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return fm;
+  for (const line of match[1]!.split("\n")) {
+    const eq = line.indexOf(":");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    // Strip surrounding quotes
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    fm[key] = val;
   }
-
-  await rebuildTagIndex();
+  return fm;
 }
 
-async function rebuildTagIndex(): Promise<void> {
-  await fs.mkdir(TAGS_DIR, { recursive: true });
-  const entries = await fs.readdir(TAGS_DIR);
-  const tagCounts: [string, number][] = [];
+function parseSummaryFromBody(content: string): string {
+  // Summary is the first plain paragraph after the blockquote
+  const afterFm = content.replace(/^---[\s\S]*?---\n*/, "");
+  const lines = afterFm.split("\n");
+  let pastTitle = false;
+  let pastQuote = false;
+  for (const line of lines) {
+    if (line.startsWith("# ")) { pastTitle = true; continue; }
+    if (!pastTitle) continue;
+    if (line.startsWith("> ")) { pastQuote = true; continue; }
+    if (!pastQuote) continue;
+    if (line.trim() === "") continue;
+    if (line.startsWith("**") || line.startsWith("## ")) break;
+    return line.trim();
+  }
+  return "";
+}
 
-  for (const entry of entries) {
-    if (entry === "index.txt" || !entry.endsWith(".txt")) continue;
-    const tag = entry.replace(".txt", "");
-    const content = await readTextSafe(path.join(TAGS_DIR, entry));
-    const count = content.trim().split("\n").filter(Boolean).length;
-    tagCounts.push([tag, count]);
+async function loadAllBookmarks(): Promise<IndexEntry[]> {
+  const entries: IndexEntry[] = [];
+  let months: string[];
+  try {
+    const dirEntries = await fs.readdir(BOOKMARKS_DIR, { withFileTypes: true });
+    months = dirEntries
+      .filter((e) => e.isDirectory() && /^\d{4}-\d{2}$/.test(e.name))
+      .map((e) => e.name);
+  } catch {
+    return [];
   }
 
-  tagCounts.sort((a, b) => b[1] - a[1]);
-  const lines = tagCounts.map(([tag, count]) => `${tag} (${count})`);
+  for (const month of months) {
+    const monthDir = path.join(BOOKMARKS_DIR, month);
+    const files = await fs.readdir(monthDir);
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
+      const content = await fs.readFile(path.join(monthDir, file), "utf8");
+      const fm = parseFrontmatter(content);
+      const tagsStr = fm.tags || "";
+      const tags = tagsStr
+        .replace(/^\[|\]$/g, "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      entries.push({
+        title: fm.title || file,
+        date: fm.date || month,
+        author: fm.author || "",
+        tags,
+        summary: parseSummaryFromBody(content),
+        useCase: "",
+        file: `${month}/${file}`,
+      });
+      // Extract useCase from content
+      const ucMatch = content.match(/\*\*Apply when:\*\* (.+)/);
+      if (ucMatch) entries[entries.length - 1]!.useCase = ucMatch[1]!;
+    }
+  }
+
+  return entries;
+}
+
+function formatIndexLine(e: IndexEntry): string {
+  const tags = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
+  const author = e.author ? ` by ${e.author}` : "";
+  const useCase = e.useCase ? `\n  Apply when: ${e.useCase}` : "";
+  return `${e.file}${author} — ${e.title}${tags}\n  ${e.summary}${useCase}`;
+}
+
+async function updateTagIndexes(
+  result: ProcessedItem,
+  filename: string,
+  month: string,
+): Promise<void> {
+  await fs.mkdir(TAGS_DIR, { recursive: true });
+
+  // Rebuild all tag files from scratch for correctness
+  const all = await loadAllBookmarks();
+  const tagMap = new Map<string, IndexEntry[]>();
+  for (const entry of all) {
+    for (const tag of entry.tags) {
+      const existing = tagMap.get(tag) || [];
+      existing.push(entry);
+      tagMap.set(tag, existing);
+    }
+  }
+
+  // Write individual tag files
+  for (const [tag, entries] of tagMap) {
+    const lines = entries
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map(formatIndexLine);
+    await fs.writeFile(
+      path.join(TAGS_DIR, `${slugify(tag)}.txt`),
+      lines.join("\n") + "\n",
+      "utf8",
+    );
+  }
+
+  // Write tag index
+  const tagCounts = [...tagMap.entries()]
+    .map(([tag, entries]) => [tag, entries.length] as [string, number])
+    .sort((a, b) => b[1] - a[1]);
   await fs.writeFile(
     path.join(TAGS_DIR, "index.txt"),
-    lines.join("\n") + "\n",
-    "utf8"
+    tagCounts.map(([tag, count]) => `${tag} (${count})`).join("\n") + "\n",
+    "utf8",
   );
 }
 
 async function updateMasterIndex(): Promise<void> {
-  const allItems = await loadAllProcessedItems();
-  const recent = allItems
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const all = await loadAllBookmarks();
+  const recent = all
+    .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 50);
 
-  const lines = recent.map((item) => formatIndexLine(item));
+  const lines = recent.map(formatIndexLine);
   await fs.mkdir(DATA_ROOT, { recursive: true });
   await fs.writeFile(
     path.join(DATA_ROOT, "index.txt"),
     lines.join("\n") + "\n",
-    "utf8"
+    "utf8",
   );
-}
-
-// ----- Read operations -----
-
-export async function getUnprocessedItems(): Promise<KnowledgeItem[]> {
-  const allItems = await loadAllItems();
-  return allItems.filter((item) => item.status === "ingested");
-}
-
-// ----- Internal helpers -----
-
-function formatIndexLine(item: KnowledgeItem): string {
-  const tags = item.tags.length > 0 ? ` [${item.tags.join(", ")}]` : "";
-  const author = item.author ? ` by ${item.author}` : "";
-  const useCase = item.useCase ? `\n  Apply when: ${item.useCase}` : "";
-  return `[${item.id}] (bookmark${author}) ${item.title || "(unprocessed)"}${tags}\n  ${item.summary || item.rawText?.slice(0, 120) || ""}${useCase}`;
-}
-
-function sanitizeFilename(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-}
-
-async function listMonthDirs(): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(ITEMS_DIR, { withFileTypes: true });
-    return entries
-      .filter((e) => e.isDirectory() && /^\d{4}-\d{2}$/.test(e.name))
-      .map((e) => path.join(ITEMS_DIR, e.name))
-      .sort()
-      .reverse();
-  } catch {
-    return [];
-  }
-}
-
-async function loadItemsInDir(dir: string): Promise<KnowledgeItem[]> {
-  const items: KnowledgeItem[] = [];
-  try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const meta = await readJsonSafe<KnowledgeItem>(
-        path.join(dir, entry.name, "meta.json")
-      );
-      if (meta) items.push(meta);
-    }
-  } catch {
-    // directory doesn't exist yet
-  }
-  return items;
-}
-
-async function loadAllItems(): Promise<KnowledgeItem[]> {
-  const monthDirs = await listMonthDirs();
-  const results = await Promise.all(monthDirs.map(loadItemsInDir));
-  return results.flat();
-}
-
-async function loadAllProcessedItems(): Promise<KnowledgeItem[]> {
-  const all = await loadAllItems();
-  return all.filter((item) => item.status === "processed");
 }

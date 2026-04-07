@@ -20,7 +20,7 @@ try {
 export const DATA_ROOT =
   process.env.BOOKMARK_BRAIN_ROOT || path.join(os.homedir(), ".bookmark-brain");
 
-export const ITEMS_DIR = path.join(DATA_ROOT, "items");
+export const BOOKMARKS_DIR = path.join(DATA_ROOT, "bookmarks");
 export const TAGS_DIR = path.join(DATA_ROOT, "tags");
 export const STATE_DIR = path.join(DATA_ROOT, "state");
 

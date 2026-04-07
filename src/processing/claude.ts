@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
 import path from "path";
 import { PROCESS_API_URL, STATE_DIR } from "../config.js";
-import type { KnowledgeItem, Concept, Entity } from "../storage/store.js";
+import type { Concept, Entity } from "../storage/store.js";
 
 async function loadAuthHeaders(): Promise<Record<string, string>> {
   try {
@@ -58,17 +58,14 @@ function parseExtractResponse(text: string): ExtractResult {
   };
 }
 
-// --- Remote processing (calls your server instead of Claude directly) ---
+// --- Remote processing ---
 
-async function processViaRemoteApi(payload: {
-  type: "bookmark";
-  text: string;
-}): Promise<ExtractResult> {
+async function processViaRemoteApi(text: string): Promise<ExtractResult> {
   const authHeaders = await loadAuthHeaders();
   const res = await fetch(`${PROCESS_API_URL}/api/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ type: "bookmark", text }),
   });
   if (!res.ok) {
     throw new Error(`Remote processing failed: ${res.status} ${await res.text()}`);
@@ -76,7 +73,7 @@ async function processViaRemoteApi(payload: {
   return (await res.json()) as ExtractResult;
 }
 
-// --- Local processing (calls Claude API directly) ---
+// --- Local processing ---
 
 function getClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -86,29 +83,29 @@ function getClient(): Anthropic {
   return new Anthropic({ apiKey });
 }
 
-async function processBookmarkLocal(item: KnowledgeItem): Promise<ExtractResult> {
+async function processBookmarkLocal(text: string): Promise<ExtractResult> {
   const client = getClient();
   const response = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
     messages: [{
       role: "user",
-      content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${item.rawText}`,
+      content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}`,
     }],
   });
 
-  const text = response.content
+  const responseText = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
     .map((block) => block.text)
     .join("");
-  return parseExtractResponse(text);
+  return parseExtractResponse(responseText);
 }
 
-// --- Public API: automatically picks local vs remote ---
+// --- Public API ---
 
-export async function processBookmark(item: KnowledgeItem): Promise<ExtractResult> {
+export async function processBookmark(text: string): Promise<ExtractResult> {
   if (PROCESS_API_URL) {
-    return processViaRemoteApi({ type: "bookmark", text: item.rawText || "" });
+    return processViaRemoteApi(text);
   }
-  return processBookmarkLocal(item);
+  return processBookmarkLocal(text);
 }

@@ -52,12 +52,18 @@ Summary of the key insight.
 - Andrej Karpathy @karpathy (person)
 ```
 
-Files live in `~/.bookmark-brain/items/YYYY-MM/bk-{hash}/bookmark.md`.
-
-Index files for browsing:
-- `~/.bookmark-brain/index.txt` — 50 most recent items
-- `~/.bookmark-brain/tags/index.txt` — all tags with counts
-- `~/.bookmark-brain/tags/{tag}.txt` — items with that tag
+```
+~/.bookmark-brain/
+├── bookmarks/
+│   └── 2026-04/
+│       ├── chunking-strategies-a1b2c3.md
+│       └── karpathy-on-transformers-d4e5f6.md
+├── index.txt              # 50 most recent bookmarks
+├── tags/
+│   ├── index.txt          # all tags with counts
+│   └── rag.txt            # bookmarks tagged "rag"
+└── state/                 # auth, sync state (internal)
+```
 
 ## License
 
