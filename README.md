@@ -9,7 +9,7 @@ Your data stays on your machine. No cloud database, no uploads.
 ## Install
 
 ```bash
-git clone https://github.com/you/bookmark-brain
+git clone https://github.com/yebe-abe/bookmark-brain
 cd bookmark-brain
 npm run setup
 ```
