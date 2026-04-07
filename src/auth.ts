@@ -45,10 +45,8 @@ export async function login(): Promise<void> {
       const { status: _, ...creds } = data;
       await fs.writeFile(AUTH_FILE, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 });
 
-      console.log(`\n  Logged in as @${data.username}\n`);
-      console.log(`  Next steps:`);
-      console.log(`    bookmark-brain start    Start the background daemon`);
-      console.log(`    bookmark-brain config   Get your Claude MCP config\n`);
+      console.log(`\n  Logged in as @${data.username}`);
+      console.log(`  Run bookmark-brain to start pulling bookmarks\n`);
 
       return;
     }

@@ -3,93 +3,26 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import readline from "readline";
 import { execSync } from "child_process";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const CONFIG_DIR = path.join(os.homedir(), ".bookmark-brain");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config");
 const BIN_NAME = "bookmark-brain";
-
-// --- Helpers ---
-
-function ask(question) {
-  if (!process.stdin.isTTY) return Promise.resolve("");
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase());
-    });
-  });
-}
-
-function setConfigKey(key, value) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  let content = "";
-  try { content = fs.readFileSync(CONFIG_FILE, "utf8"); } catch {}
-  const regex = new RegExp(`^${key}=.*$`, "m");
-  if (regex.test(content)) {
-    content = content.replace(regex, `${key}=${value}`);
-  } else {
-    if (content.length && !content.endsWith("\n")) content += "\n";
-    content += `${key}=${value}\n`;
-  }
-  fs.writeFileSync(CONFIG_FILE, content);
-}
 
 function run(cmd) {
   execSync(cmd, { cwd: ROOT, stdio: "inherit" });
 }
 
-// --- 1. Ask about screenshots before installing anything ---
+// --- 1. Install dependencies ---
 
-let enableScreenshots = false;
+console.log("[setup] installing dependencies...");
+run("npm install");
 
-if (process.platform === "darwin") {
-  console.log();
-  const answer = await ask("Import screenshots from iCloud Photos into bookmark-brain? [y/N] ");
-  enableScreenshots = answer === "y" || answer === "yes";
-} else {
-  console.log("\n[setup] screenshot ingestion is macOS-only, skipping");
-}
-
-setConfigKey("SCREENSHOTS", enableScreenshots ? "true" : "false");
-
-// --- 2. Install dependencies (skip chokidar if no screenshots) ---
-
-console.log("\n[setup] installing dependencies...");
-if (enableScreenshots) {
-  run("npm install");
-} else {
-  run("npm install --omit=optional");
-}
-
-// --- 3. Install osxphotos if screenshots enabled ---
-
-if (enableScreenshots) {
-  try {
-    execSync("osxphotos version", { stdio: "pipe" });
-    console.log("[setup] osxphotos already installed");
-  } catch {
-    console.log("[setup] installing osxphotos (reads your Photos library)...");
-    try {
-      run("pip3 install osxphotos");
-      console.log("[setup] osxphotos installed");
-    } catch {
-      console.log("[setup] could not install osxphotos automatically");
-      console.log("[setup] install manually: pip3 install osxphotos");
-      console.log("[setup] without it, you can still drop images into ~/.bookmark-brain/inbox/");
-    }
-  }
-}
-
-// --- 4. Build ---
+// --- 2. Build ---
 
 console.log("\n[setup] building...");
 run("npm run build");
 
-// --- 5. Install CLI symlink ---
+// --- 3. Install CLI symlink ---
 
 const ENTRY = path.join(ROOT, "dist", "index.js");
 
@@ -137,11 +70,4 @@ const dest = path.join(binDir, BIN_NAME);
 fs.writeFileSync(dest, wrapper, { mode: 0o755 });
 console.log(`[setup] installed ${dest}`);
 
-// --- Done ---
-
-if (enableScreenshots) {
-  console.log("\n[setup] done! screenshots enabled");
-} else {
-  console.log("\n[setup] done! screenshots disabled (re-run setup to change)");
-}
-console.log("[setup] try: bookmark-brain help");
+console.log("\n[setup] done! run: bookmark-brain login");

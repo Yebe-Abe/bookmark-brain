@@ -34,8 +34,7 @@ Rules:
 - 3-7 lowercase tags, use underscores for multi-word (e.g. "transformer_architecture" not "ai")
 - Be specific with tags — prefer precise technical terms
 - Only include entities you're confident about
-- useCase is the most important field — think about WHEN this knowledge becomes actionable
-- For screenshots, extract any visible text, code, or key information into the summary`;
+- useCase is the most important field — think about WHEN this knowledge becomes actionable`;
 
 export interface ExtractResult {
   title: string;
@@ -44,7 +43,6 @@ export interface ExtractResult {
   tags: string[];
   concepts: Concept[];
   entities: Entity[];
-  rawText?: string;
 }
 
 function parseExtractResponse(text: string): ExtractResult {
@@ -57,17 +55,14 @@ function parseExtractResponse(text: string): ExtractResult {
     tags: (parsed.tags || []).map((t) => t.toLowerCase().trim()).filter(Boolean),
     concepts: parsed.concepts || [],
     entities: parsed.entities || [],
-    rawText: parsed.rawText,
   };
 }
 
 // --- Remote processing (calls your server instead of Claude directly) ---
 
 async function processViaRemoteApi(payload: {
-  type: "bookmark" | "screenshot";
-  text?: string;
-  imageBase64?: string;
-  imageMimeType?: string;
+  type: "bookmark";
+  text: string;
 }): Promise<ExtractResult> {
   const authHeaders = await loadAuthHeaders();
   const res = await fetch(`${PROCESS_API_URL}/api/process`, {
@@ -109,36 +104,6 @@ async function processBookmarkLocal(item: KnowledgeItem): Promise<ExtractResult>
   return parseExtractResponse(text);
 }
 
-async function processScreenshotLocal(imagePath: string): Promise<ExtractResult> {
-  const client = getClient();
-  const imageData = await fs.readFile(imagePath);
-  const base64 = imageData.toString("base64");
-  const ext = imagePath.split(".").pop()?.toLowerCase() || "png";
-  const mediaType =
-    ext === "jpg" || ext === "jpeg" ? "image/jpeg"
-      : ext === "webp" ? "image/webp"
-        : ext === "gif" ? "image/gif"
-          : "image/png";
-
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1024,
-    messages: [{
-      role: "user",
-      content: [
-        { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-        { type: "text", text: `${EXTRACT_PROMPT}\n\nAlso include a "rawText" field with any text visible in the screenshot.` },
-      ],
-    }],
-  });
-
-  const text = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("");
-  return parseExtractResponse(text);
-}
-
 // --- Public API: automatically picks local vs remote ---
 
 export async function processBookmark(item: KnowledgeItem): Promise<ExtractResult> {
@@ -146,17 +111,4 @@ export async function processBookmark(item: KnowledgeItem): Promise<ExtractResul
     return processViaRemoteApi({ type: "bookmark", text: item.rawText || "" });
   }
   return processBookmarkLocal(item);
-}
-
-export async function processScreenshot(item: KnowledgeItem, imagePath: string): Promise<ExtractResult> {
-  if (PROCESS_API_URL) {
-    const imageData = await fs.readFile(imagePath);
-    const ext = imagePath.split(".").pop()?.toLowerCase() || "png";
-    return processViaRemoteApi({
-      type: "screenshot",
-      imageBase64: imageData.toString("base64"),
-      imageMimeType: ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`,
-    });
-  }
-  return processScreenshotLocal(imagePath);
 }

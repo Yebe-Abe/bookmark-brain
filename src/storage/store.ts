@@ -7,7 +7,7 @@ import { DATA_ROOT, ITEMS_DIR, TAGS_DIR } from "../config.js";
 
 export interface KnowledgeItem {
   id: string;
-  source: "x_bookmark" | "screenshot";
+  source: "x_bookmark";
   sourceId: string;
   contentHash: string;
 
@@ -46,13 +46,11 @@ export interface Entity {
 // ----- Helpers -----
 
 function monthKey(isoDate: string): string {
-  // "2026-04-06T..." -> "2026-04"
   return isoDate.slice(0, 7);
 }
 
-function itemDirName(source: "x_bookmark" | "screenshot", hash: string): string {
-  const prefix = source === "x_bookmark" ? "bk" : "ss";
-  return `${prefix}-${hash.slice(0, 12)}`;
+function itemDirName(hash: string): string {
+  return `bk-${hash.slice(0, 12)}`;
 }
 
 export function contentHash(content: string): string {
@@ -83,15 +81,15 @@ async function readTextSafe(filePath: string): Promise<string> {
  * Returns the item if new, null if duplicate.
  */
 export async function ingestItem(opts: {
-  source: "x_bookmark" | "screenshot";
+  source: "x_bookmark";
   sourceId: string;
-  rawContent: string; // text for bookmarks, file path for screenshots
+  rawContent: string;
   author?: string;
   url?: string;
   createdAt?: string;
 }): Promise<KnowledgeItem | null> {
   const hash = contentHash(opts.rawContent);
-  const dirName = itemDirName(opts.source, hash);
+  const dirName = itemDirName(hash);
   const month = monthKey(opts.createdAt || new Date().toISOString());
   const itemDir = path.join(ITEMS_DIR, month, dirName);
 
@@ -104,15 +102,7 @@ export async function ingestItem(opts: {
   }
 
   await fs.mkdir(itemDir, { recursive: true });
-
-  // Write raw content
-  if (opts.source === "screenshot") {
-    // rawContent is the path to the screenshot file — copy it
-    const ext = path.extname(opts.rawContent) || ".png";
-    await fs.copyFile(opts.rawContent, path.join(itemDir, `raw${ext}`));
-  } else {
-    await fs.writeFile(path.join(itemDir, "raw.json"), opts.rawContent, "utf8");
-  }
+  await fs.writeFile(path.join(itemDir, "raw.json"), opts.rawContent, "utf8");
 
   const item: KnowledgeItem = {
     id: dirName,
@@ -125,7 +115,7 @@ export async function ingestItem(opts: {
     tags: [],
     concepts: [],
     entities: [],
-    rawText: opts.source === "x_bookmark" ? opts.rawContent : null,
+    rawText: opts.rawContent,
     author: opts.author || null,
     url: opts.url || null,
     createdAt: opts.createdAt || new Date().toISOString(),
@@ -146,10 +136,7 @@ export async function ingestItem(opts: {
 /**
  * Save processed results back to an item and update all indexes.
  */
-export async function saveProcessedItem(
-  item: KnowledgeItem,
-  extracted: { rawText?: string }
-): Promise<void> {
+export async function saveProcessedItem(item: KnowledgeItem): Promise<void> {
   const month = monthKey(item.createdAt);
   const itemDir = path.join(ITEMS_DIR, month, item.id);
 
@@ -162,14 +149,12 @@ export async function saveProcessedItem(
     "utf8"
   );
 
-  // Write extracted text for screenshots
-  if (extracted.rawText) {
-    await fs.writeFile(
-      path.join(itemDir, "extracted.txt"),
-      extracted.rawText,
-      "utf8"
-    );
-  }
+  // Write markdown file
+  await fs.writeFile(
+    path.join(itemDir, "bookmark.md"),
+    renderMarkdown(item),
+    "utf8"
+  );
 
   // Update all indexes
   await updateMonthIndex(month);
@@ -192,11 +177,69 @@ export async function markItemError(item: KnowledgeItem, error: string): Promise
   );
 }
 
+// ----- Markdown rendering -----
+
+function renderMarkdown(item: KnowledgeItem): string {
+  const lines: string[] = [];
+
+  // YAML frontmatter
+  lines.push("---");
+  lines.push(`title: ${JSON.stringify(item.title)}`);
+  lines.push(`date: ${item.createdAt.split("T")[0]}`);
+  if (item.author) lines.push(`author: ${JSON.stringify(item.author)}`);
+  if (item.url) lines.push(`url: ${JSON.stringify(item.url)}`);
+  if (item.tags.length) lines.push(`tags: [${item.tags.join(", ")}]`);
+  lines.push("---");
+  lines.push("");
+
+  // Title
+  lines.push(`# ${item.title}`);
+  lines.push("");
+
+  // Original tweet as blockquote
+  if (item.rawText) {
+    for (const line of item.rawText.split("\n")) {
+      lines.push(`> ${line}`);
+    }
+    lines.push("");
+  }
+
+  // Summary
+  if (item.summary) {
+    lines.push(item.summary);
+    lines.push("");
+  }
+
+  // Use case
+  if (item.useCase) {
+    lines.push(`**Apply when:** ${item.useCase}`);
+    lines.push("");
+  }
+
+  // Concepts
+  if (item.concepts.length) {
+    lines.push("## Concepts");
+    for (const c of item.concepts) {
+      lines.push(`- ${c.name} (${c.category})`);
+    }
+    lines.push("");
+  }
+
+  // Entities
+  if (item.entities.length) {
+    lines.push("## Entities");
+    for (const e of item.entities) {
+      const handle = e.handle ? ` ${e.handle}` : "";
+      lines.push(`- ${e.name}${handle} (${e.type})`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 // ----- Index generation -----
 
-/**
- * Rebuild a month's index.txt from all meta.json files in that month.
- */
 async function updateMonthIndex(month: string): Promise<void> {
   const monthDir = path.join(ITEMS_DIR, month);
   const items = await loadItemsInDir(monthDir);
@@ -212,9 +255,6 @@ async function updateMonthIndex(month: string): Promise<void> {
   );
 }
 
-/**
- * Rebuild a tag file with all items that have that tag.
- */
 async function updateTagIndexes(item: KnowledgeItem): Promise<void> {
   await fs.mkdir(TAGS_DIR, { recursive: true });
 
@@ -222,14 +262,12 @@ async function updateTagIndexes(item: KnowledgeItem): Promise<void> {
     const tagFile = path.join(TAGS_DIR, `${sanitizeFilename(tag)}.txt`);
     const existing = await readTextSafe(tagFile);
 
-    // Avoid duplicates: check if item ID already in file
     if (existing.includes(item.id)) continue;
 
     const line = formatIndexLine(item);
     await fs.appendFile(tagFile, line + "\n", "utf8");
   }
 
-  // Rebuild tag index (tag → count)
   await rebuildTagIndex();
 }
 
@@ -255,9 +293,6 @@ async function rebuildTagIndex(): Promise<void> {
   );
 }
 
-/**
- * Rebuild master index.txt with the most recent processed items.
- */
 async function updateMasterIndex(): Promise<void> {
   const allItems = await loadAllProcessedItems();
   const recent = allItems
@@ -275,82 +310,18 @@ async function updateMasterIndex(): Promise<void> {
 
 // ----- Read operations -----
 
-/**
- * Find all items with status="ingested" (ready for processing).
- */
 export async function getUnprocessedItems(): Promise<KnowledgeItem[]> {
   const allItems = await loadAllItems();
   return allItems.filter((item) => item.status === "ingested");
 }
 
-/**
- * Load a single item by its ID (e.g. "bk-a1b2c3d4e5f6").
- */
-export async function getItem(itemId: string): Promise<{
-  item: KnowledgeItem;
-  rawContent: string | null;
-  imagePath: string | null;
-} | null> {
-  const allMonths = await listMonthDirs();
-  for (const monthDir of allMonths) {
-    const itemDir = path.join(monthDir, itemId);
-    const meta = await readJsonSafe<KnowledgeItem>(path.join(itemDir, "meta.json"));
-    if (!meta) continue;
-
-    let rawContent: string | null = null;
-    let imagePath: string | null = null;
-
-    if (meta.source === "x_bookmark") {
-      rawContent = await readTextSafe(path.join(itemDir, "raw.json"));
-    } else {
-      // Find the raw image file
-      const files = await fs.readdir(itemDir).catch(() => []);
-      const rawFile = (files as string[]).find((f) => f.startsWith("raw."));
-      if (rawFile) {
-        imagePath = path.join(itemDir, rawFile);
-      }
-      rawContent = await readTextSafe(path.join(itemDir, "extracted.txt"));
-    }
-
-    return { item: meta, rawContent, imagePath };
-  }
-  return null;
-}
-
-/** Read the master index.txt */
-export async function getMasterIndex(): Promise<string> {
-  return readTextSafe(path.join(DATA_ROOT, "index.txt"));
-}
-
-/** Read a month's index.txt */
-export async function getMonthIndex(month: string): Promise<string> {
-  return readTextSafe(path.join(ITEMS_DIR, month, "index.txt"));
-}
-
-/** Read the tag index */
-export async function getTagIndex(): Promise<string> {
-  return readTextSafe(path.join(TAGS_DIR, "index.txt"));
-}
-
-/** Read a specific tag's items */
-export async function getTagItems(tag: string): Promise<string> {
-  return readTextSafe(path.join(TAGS_DIR, `${sanitizeFilename(tag)}.txt`));
-}
-
-/** List available months */
-export async function listMonths(): Promise<string[]> {
-  const dirs = await listMonthDirs();
-  return dirs.map((d) => path.basename(d)).sort().reverse();
-}
-
 // ----- Internal helpers -----
 
 function formatIndexLine(item: KnowledgeItem): string {
-  const source = item.source === "x_bookmark" ? "bookmark" : "screenshot";
   const tags = item.tags.length > 0 ? ` [${item.tags.join(", ")}]` : "";
   const author = item.author ? ` by ${item.author}` : "";
   const useCase = item.useCase ? `\n  Apply when: ${item.useCase}` : "";
-  return `[${item.id}] (${source}${author}) ${item.title || "(unprocessed)"}${tags}\n  ${item.summary || item.rawText?.slice(0, 120) || ""}${useCase}`;
+  return `[${item.id}] (bookmark${author}) ${item.title || "(unprocessed)"}${tags}\n  ${item.summary || item.rawText?.slice(0, 120) || ""}${useCase}`;
 }
 
 function sanitizeFilename(name: string): string {
