@@ -37,8 +37,25 @@ async function processOne(item: KnowledgeItem): Promise<void> {
   }
 }
 
+/**
+ * Process all unprocessed items, then return.
+ */
+export async function processAll(): Promise<number> {
+  const items = await getUnprocessedItems();
+  if (items.length === 0) return 0;
+
+  console.log(`[processor] ${items.length} item(s) to process`);
+  for (const item of items) {
+    await processOne(item);
+  }
+  return items.length;
+}
+
+/**
+ * Process items on a loop forever.
+ */
 export function startProcessingLoop(): void {
-  console.log(`[processor] started (checking every ${PROCESS_INTERVAL_MS / 1000}s)`);
+  console.log(`[processor] watching for new items (every ${PROCESS_INTERVAL_MS / 1000}s)`);
 
   const tick = async () => {
     try {
