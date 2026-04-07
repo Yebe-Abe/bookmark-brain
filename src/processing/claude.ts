@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
 import path from "path";
 import { PROCESS_API_URL, STATE_DIR } from "../config.js";
@@ -13,28 +12,6 @@ async function loadAuthHeaders(): Promise<Record<string, string>> {
   } catch {}
   return {};
 }
-
-const EXTRACT_PROMPT = `Analyze this content and extract structured knowledge.
-
-Return JSON only, no markdown fencing:
-{
-  "title": "Short descriptive title (< 10 words)",
-  "summary": "1-2 sentence summary of the key insight or information",
-  "useCase": "When would someone apply this? What problem does it solve? What kind of project or situation makes this relevant? Be specific.",
-  "tags": ["tag1", "tag2"],
-  "concepts": [
-    {"name": "concept name", "category": "ml_concept|tool|technique|pattern|architecture|workflow|other", "confidence": 0.9}
-  ],
-  "entities": [
-    {"name": "Entity Name", "type": "person|tool|company|paper|repo", "handle": "@handle or null"}
-  ]
-}
-
-Rules:
-- 3-7 lowercase tags, use underscores for multi-word (e.g. "transformer_architecture" not "ai")
-- Be specific with tags — prefer precise technical terms
-- Only include entities you're confident about
-- useCase is the most important field — think about WHEN this knowledge becomes actionable`;
 
 export interface ExtractResult {
   title: string;
@@ -58,9 +35,7 @@ function parseExtractResponse(text: string): ExtractResult {
   };
 }
 
-// --- Remote processing ---
-
-async function processViaRemoteApi(text: string): Promise<ExtractResult> {
+export async function processBookmark(text: string): Promise<ExtractResult> {
   const authHeaders = await loadAuthHeaders();
   const res = await fetch(`${PROCESS_API_URL}/api/process`, {
     method: "POST",
@@ -68,44 +43,7 @@ async function processViaRemoteApi(text: string): Promise<ExtractResult> {
     body: JSON.stringify({ type: "bookmark", text }),
   });
   if (!res.ok) {
-    throw new Error(`Remote processing failed: ${res.status} ${await res.text()}`);
+    throw new Error(`Processing failed: ${res.status} ${await res.text()}`);
   }
   return (await res.json()) as ExtractResult;
-}
-
-// --- Local processing ---
-
-function getClient(): Anthropic {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY not set. Set it in your environment or .env file.");
-  }
-  return new Anthropic({ apiKey });
-}
-
-async function processBookmarkLocal(text: string): Promise<ExtractResult> {
-  const client = getClient();
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1024,
-    messages: [{
-      role: "user",
-      content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}`,
-    }],
-  });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("");
-  return parseExtractResponse(responseText);
-}
-
-// --- Public API ---
-
-export async function processBookmark(text: string): Promise<ExtractResult> {
-  if (PROCESS_API_URL) {
-    return processViaRemoteApi(text);
-  }
-  return processBookmarkLocal(text);
 }

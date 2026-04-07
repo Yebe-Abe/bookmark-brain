@@ -48,7 +48,7 @@ export async function loadAuth(): Promise<AuthState | null> {
   }
 }
 
-export async function saveAuth(auth: AuthState): Promise<void> {
+async function saveAuth(auth: AuthState): Promise<void> {
   await fs.mkdir(STATE_DIR, { recursive: true });
   await fs.writeFile(AUTH_FILE, JSON.stringify(auth, null, 2) + "\n", { mode: 0o600 });
 }
@@ -92,14 +92,9 @@ async function refreshTokens(auth: AuthState): Promise<AuthState> {
  * Get a valid access token, refreshing if needed.
  */
 async function getAccessToken(): Promise<{ token: string; userId: string }> {
-  // Legacy: direct bearer token
-  if (process.env.X_BEARER_TOKEN && process.env.X_USER_ID) {
-    return { token: process.env.X_BEARER_TOKEN, userId: process.env.X_USER_ID };
-  }
-
   let auth = await loadAuth();
   if (!auth) {
-    throw new Error("Not authenticated with X. Run the OAuth flow first.");
+    throw new Error("Not authenticated with X. Run: bookmark-brain login");
   }
 
   // Refresh if token expires within 5 minutes
@@ -147,6 +142,13 @@ export async function pollBookmarks(): Promise<number> {
     `https://api.x.com/2/users/${userId}/bookmarks?${params}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
+
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after");
+    const wait = retryAfter ? parseInt(retryAfter, 10) : 60;
+    console.log(`[x-bookmarks] rate limited, retry after ${wait}s`);
+    return 0;
+  }
 
   if (!response.ok) {
     const errorText = await response.text();

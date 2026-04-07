@@ -33,10 +33,29 @@ export interface ProcessedResult {
   entities: Entity[];
 }
 
-// ----- Helpers -----
+// ----- In-memory state (loaded once, flushed on mutation) -----
 
 const PENDING_FILE = path.join(STATE_DIR, "pending.json");
 const SEEN_FILE = path.join(STATE_DIR, "seen.json");
+
+let seen: Set<string> | null = null;
+let pending: PendingItem[] | null = null;
+
+async function load(): Promise<void> {
+  if (seen !== null) return;
+  seen = new Set((await readJsonSafe<string[]>(SEEN_FILE)) || []);
+  pending = (await readJsonSafe<PendingItem[]>(PENDING_FILE)) || [];
+}
+
+async function flushSeen(): Promise<void> {
+  await writeJson(SEEN_FILE, [...seen!]);
+}
+
+async function flushPending(): Promise<void> {
+  await writeJson(PENDING_FILE, pending!);
+}
+
+// ----- Helpers -----
 
 function slugify(text: string, maxLen = 40): string {
   return text
@@ -64,27 +83,6 @@ async function writeJson(filePath: string, data: unknown): Promise<void> {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
-// ----- Seen set (dedup by tweet ID) -----
-
-async function loadSeen(): Promise<Set<string>> {
-  const arr = await readJsonSafe<string[]>(SEEN_FILE);
-  return new Set(arr || []);
-}
-
-async function saveSeen(seen: Set<string>): Promise<void> {
-  await writeJson(SEEN_FILE, [...seen]);
-}
-
-// ----- Pending queue -----
-
-async function loadPending(): Promise<PendingItem[]> {
-  return (await readJsonSafe<PendingItem[]>(PENDING_FILE)) || [];
-}
-
-async function savePending(items: PendingItem[]): Promise<void> {
-  await writeJson(PENDING_FILE, items);
-}
-
 // ----- Public: ingest -----
 
 export async function ingestItem(opts: {
@@ -94,13 +92,12 @@ export async function ingestItem(opts: {
   url: string | null;
   createdAt: string;
 }): Promise<PendingItem | null> {
-  // Dedup by tweet ID
-  const seen = await loadSeen();
-  if (seen.has(opts.sourceId)) return null;
+  await load();
 
-  seen.add(opts.sourceId);
-  await saveSeen(seen);
+  if (seen!.has(opts.sourceId)) return null;
 
+  // Mutate in memory (synchronous — no yield, no race)
+  seen!.add(opts.sourceId);
   const item: PendingItem = {
     sourceId: opts.sourceId,
     text: opts.text,
@@ -108,10 +105,11 @@ export async function ingestItem(opts: {
     url: opts.url,
     createdAt: opts.createdAt,
   };
+  pending!.push(item);
 
-  const pending = await loadPending();
-  pending.push(item);
-  await savePending(pending);
+  // Flush to disk
+  await flushSeen();
+  await flushPending();
 
   return item;
 }
@@ -119,58 +117,59 @@ export async function ingestItem(opts: {
 // ----- Public: processing -----
 
 export async function getUnprocessedItems(): Promise<PendingItem[]> {
-  return loadPending();
+  await load();
+  return [...pending!];
 }
 
 export async function saveProcessedItem(
-  pending: PendingItem,
+  item: PendingItem,
   result: ProcessedResult,
 ): Promise<void> {
-  const month = monthKey(pending.createdAt);
+  await load();
+
+  const month = monthKey(item.createdAt);
   const monthDir = path.join(BOOKMARKS_DIR, month);
   await fs.mkdir(monthDir, { recursive: true });
 
   const slug = slugify(result.title) || "bookmark";
-  const shortId = pending.sourceId.slice(-6);
+  const shortId = item.sourceId.slice(-6);
   const filename = `${slug}-${shortId}.md`;
 
   await fs.writeFile(
     path.join(monthDir, filename),
-    renderMarkdown(pending, result),
+    renderMarkdown(item, result),
     "utf8",
   );
 
-  // Remove from pending queue
-  const items = await loadPending();
-  await savePending(items.filter((i) => i.sourceId !== pending.sourceId));
+  // Remove from pending (in memory, synchronous)
+  pending = pending!.filter((i) => i.sourceId !== item.sourceId);
+  await flushPending();
 
-  // Update indexes
   await rebuildIndexes();
 }
 
-export async function markItemError(pending: PendingItem, error: string): Promise<void> {
-  console.error(`[store] error processing ${pending.sourceId}: ${error}`);
+export async function markItemError(item: PendingItem, error: string): Promise<void> {
+  await load();
+  console.error(`[store] error processing ${item.sourceId}: ${error}`);
 
-  // Remove from seen so it can be retried on next poll
-  const seen = await loadSeen();
-  seen.delete(pending.sourceId);
-  await saveSeen(seen);
+  // Remove from seen so it retries, remove from pending (both synchronous)
+  seen!.delete(item.sourceId);
+  pending = pending!.filter((i) => i.sourceId !== item.sourceId);
 
-  // Remove from pending
-  const items = await loadPending();
-  await savePending(items.filter((i) => i.sourceId !== pending.sourceId));
+  await flushSeen();
+  await flushPending();
 }
 
 // ----- Markdown rendering -----
 
-function renderMarkdown(pending: PendingItem, result: ProcessedResult): string {
+function renderMarkdown(item: PendingItem, result: ProcessedResult): string {
   const lines: string[] = [];
 
   lines.push("---");
   lines.push(`title: ${JSON.stringify(result.title)}`);
-  lines.push(`date: ${pending.createdAt.split("T")[0]}`);
-  if (pending.author) lines.push(`author: ${JSON.stringify(pending.author)}`);
-  if (pending.url) lines.push(`url: ${JSON.stringify(pending.url)}`);
+  lines.push(`date: ${item.createdAt.split("T")[0]}`);
+  if (item.author) lines.push(`author: ${JSON.stringify(item.author)}`);
+  if (item.url) lines.push(`url: ${JSON.stringify(item.url)}`);
   if (result.tags.length) lines.push(`tags: [${result.tags.join(", ")}]`);
   lines.push("---");
   lines.push("");
@@ -178,8 +177,8 @@ function renderMarkdown(pending: PendingItem, result: ProcessedResult): string {
   lines.push(`# ${result.title}`);
   lines.push("");
 
-  if (pending.text) {
-    for (const line of pending.text.split("\n")) {
+  if (item.text) {
+    for (const line of item.text.split("\n")) {
       lines.push(`> ${line}`);
     }
     lines.push("");

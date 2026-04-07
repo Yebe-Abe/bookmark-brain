@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "fs/promises";
-import { DATA_ROOT, X_POLL_INTERVAL_MS, PROCESS_API_URL } from "./config.js";
+import { DATA_ROOT, X_POLL_INTERVAL_MS } from "./config.js";
 import { pollBookmarks, loadAuth } from "./ingestion/x-bookmarks.js";
 import { processAll, startProcessingLoop } from "./processing/processor.js";
 import { login } from "./auth.js";
@@ -37,19 +37,13 @@ async function main() {
   await fs.mkdir(DATA_ROOT, { recursive: true });
 
   const auth = await loadAuth();
-  const hasLegacyAuth = process.env.X_BEARER_TOKEN && process.env.X_USER_ID;
-
-  if (!auth && !hasLegacyAuth) {
+  if (!auth) {
     console.log("Not logged in. Run: bookmark-brain login");
     process.exit(1);
   }
 
-  const hasProcessing = PROCESS_API_URL || process.env.ANTHROPIC_API_KEY;
-  const label = auth ? `@${auth!.username}` : "bearer token";
-
   if (watch) {
-    // --watch: poll forever
-    console.log(`[bookmark-brain] watching as ${label} (every ${X_POLL_INTERVAL_MS / 1000}s)`);
+    console.log(`[bookmark-brain] watching as @${auth.username} (every ${X_POLL_INTERVAL_MS / 1000}s)`);
 
     const poll = async () => {
       try {
@@ -61,27 +55,19 @@ async function main() {
     };
 
     await poll();
-
-    if (hasProcessing) {
-      startProcessingLoop();
-    }
-
+    startProcessingLoop();
     setInterval(poll, X_POLL_INTERVAL_MS);
 
     const shutdown = () => { console.log("\n[bookmark-brain] stopped"); process.exit(0); };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
   } else {
-    // Default: one-shot sync
-    console.log(`[bookmark-brain] syncing as ${label}...`);
+    console.log(`[bookmark-brain] syncing as @${auth.username}...`);
 
     const count = await pollBookmarks();
-    console.log(`[bookmark-brain] ${count} new bookmark(s)`);
+    if (count > 0) console.log(`[bookmark-brain] ${count} new bookmark(s)`);
 
-    if (hasProcessing && count > 0) {
-      await processAll();
-    }
-
+    await processAll();
     console.log("[bookmark-brain] done");
   }
 }

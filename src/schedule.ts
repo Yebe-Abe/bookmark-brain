@@ -76,7 +76,7 @@ function readCrontab(): string {
 }
 
 function writeCrontab(content: string): void {
-  execSync(`echo ${JSON.stringify(content)} | crontab -`);
+  execSync("crontab -", { input: content });
 }
 
 function removeBbLines(crontab: string): string {

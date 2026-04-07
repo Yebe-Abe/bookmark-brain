@@ -29,68 +29,37 @@ Rules:
 - 3-7 lowercase tags, use underscores for multi-word (e.g. "transformer_architecture" not "ai")
 - Be specific with tags — prefer precise technical terms
 - Only include entities you're confident about
-- useCase is the most important field — think about WHEN this knowledge becomes actionable, not just what it is
-- For screenshots, extract any visible text, code, or key information into the summary`;
+- useCase is the most important field — think about WHEN this knowledge becomes actionable, not just what it is`;
 
 const MAX_TEXT_LENGTH = 10_000;
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB base64
 
 /**
  * POST /api/process
  * Requires: Authorization: Bearer bbk_<key> + X-User-Id header
  */
 router.post("/", async (req: Request, res: Response) => {
-  const { type, text, imageBase64, imageMimeType } = req.body as {
+  const { type, text } = req.body as {
     type?: string;
     text?: string;
-    imageBase64?: string;
-    imageMimeType?: string;
   };
 
-  if (!type || (type !== "bookmark" && type !== "screenshot")) {
-    res.status(400).json({ error: "type must be 'bookmark' or 'screenshot'" });
+  if (type !== "bookmark") {
+    res.status(400).json({ error: "type must be 'bookmark'" });
     return;
   }
 
-  // Input validation
-  if (type === "bookmark") {
-    if (!text) { res.status(400).json({ error: "text required for bookmarks" }); return; }
-    if (text.length > MAX_TEXT_LENGTH) { res.status(400).json({ error: `text exceeds ${MAX_TEXT_LENGTH} chars` }); return; }
-  } else {
-    if (!imageBase64) { res.status(400).json({ error: "imageBase64 required for screenshots" }); return; }
-    if (imageBase64.length > MAX_IMAGE_SIZE) { res.status(400).json({ error: "image too large (max 5MB)" }); return; }
-    const validMime = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-    if (imageMimeType && !validMime.includes(imageMimeType)) {
-      res.status(400).json({ error: "invalid imageMimeType" });
-      return;
-    }
-  }
+  if (!text) { res.status(400).json({ error: "text required" }); return; }
+  if (text.length > MAX_TEXT_LENGTH) { res.status(400).json({ error: `text exceeds ${MAX_TEXT_LENGTH} chars` }); return; }
 
   try {
     if (!ANTHROPIC_API_KEY) { res.status(500).json({ error: "Processing not configured" }); return; }
     const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-    let response: Anthropic.Message;
-
-    if (type === "bookmark") {
-      response = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}` }],
-      });
-    } else {
-      response = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: (imageMimeType || "image/png") as "image/png" | "image/jpeg" | "image/webp" | "image/gif", data: imageBase64! } },
-            { type: "text", text: `${EXTRACT_PROMPT}\n\nAlso include a "rawText" field with any text visible in the screenshot.` },
-          ],
-        }],
-      });
-    }
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}` }],
+    });
 
     const responseText = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")

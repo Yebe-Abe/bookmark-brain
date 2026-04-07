@@ -1,4 +1,3 @@
-import { exec } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import { STATE_DIR, PROCESS_API_URL } from "./config.js";
@@ -25,7 +24,8 @@ export async function login(): Promise<void> {
 
   // Open browser
   const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-  exec(`${openCmd} "${authorizeUrl}"`);
+  const { execFile } = await import("child_process");
+  execFile(openCmd, [authorizeUrl]);
   console.log("[login] opened browser — authorize with X...");
 
   // Poll for completion
