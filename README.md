@@ -2,7 +2,7 @@
 
 Pull your X/Twitter bookmarks, process them with Claude, and save as markdown files on your local filesystem.
 
-Every bookmark gets tagged, summarized, and annotated with **when it's useful** — structured knowledge you can grep, browse, or feed into other tools.
+Every bookmark gets tagged, summarized, and annotated with 'when it's useful' structured knowledge you can grep, browse, or feed into other tools.
 
 Your data stays on your machine. No cloud database, no uploads.
 
