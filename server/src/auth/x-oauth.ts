@@ -1,8 +1,7 @@
 import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import { X_CLIENT_ID, X_CLIENT_SECRET, SERVER_URL, SERVER_SECRET } from "../config.js";
-import { deriveApiKey, deriveMcpToken, deriveSubdomain } from "./keys.js";
-import { rateLimit } from "./middleware.js";
+import { deriveApiKey, rateLimit } from "./middleware.js";
 
 const router = Router();
 
@@ -105,10 +104,7 @@ router.get("/callback", async (req: Request, res: Response) => {
       username = me.data.username;
     }
 
-    // Derive all keys from user ID
     const apiKey = deriveApiKey(userId);
-    const mcpToken = deriveMcpToken(userId);
-    const subdomain = deriveSubdomain(userId);
 
     completedFlows.set(state, {
       result: {
@@ -119,15 +115,12 @@ router.get("/callback", async (req: Request, res: Response) => {
         expiresAt: Date.now() + tokens.expires_in * 1000,
         userId,
         username,
-        // Derived keys
         apiKey,
-        mcpToken,
-        subdomain,
       },
       createdAt: Date.now(),
     });
 
-    console.log(`[x-oauth] authenticated @${username} (${userId}), subdomain: ${subdomain}`);
+    console.log(`[x-oauth] authenticated @${username} (${userId})`);
 
     // Escape username for HTML to prevent XSS
     const safeUsername = username.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);

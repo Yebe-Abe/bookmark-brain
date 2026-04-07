@@ -6,8 +6,6 @@ import { DATA_ROOT, INBOX_DIR, STATE_DIR, X_POLL_INTERVAL_MS, PROCESS_API_URL } 
 import { pollBookmarks, loadAuth } from "./ingestion/x-bookmarks.js";
 import { startScreenshots } from "./ingestion/screenshots.js";
 import { startProcessingLoop } from "./processing/processor.js";
-import { startMcpServer } from "./mcp/server.js";
-import { startTunnel } from "./tunnel.js";
 import { login } from "./auth.js";
 import { installDaemon, uninstallDaemon, daemonStatus } from "./daemon.js";
 
@@ -37,47 +35,22 @@ Commands:
 }
 
 /**
- * Print the MCP config JSON block for Claude Desktop/Code.
+ * Print the MCP config for Claude Desktop / Claude Code.
+ * Uses stdio transport — Claude spawns the process directly.
  */
 async function printConfig(): Promise<void> {
-  const authFile = path.join(STATE_DIR, "x-auth.json");
-  const tunnelFile = path.join(STATE_DIR, "tunnel.json");
+  const stdioServer = path.resolve(path.dirname(new URL(import.meta.url).pathname), "mcp", "stdio.js");
 
-  let mcpToken = "";
-  let tunnelUrl = "";
+  const entry = {
+    command: "node",
+    args: [stdioServer],
+  };
 
-  try {
-    const auth = JSON.parse(await fs.readFile(authFile, "utf8"));
-    mcpToken = auth.mcpToken || "";
-  } catch {}
+  console.log(`\n  Claude Desktop — add to ~/Library/Application Support/Claude/claude_desktop_config.json:\n`);
+  console.log(JSON.stringify({ mcpServers: { "bookmark-brain": entry } }, null, 2));
 
-  try {
-    const tunnel = JSON.parse(await fs.readFile(tunnelFile, "utf8"));
-    if (tunnel.mcpEndpoint) tunnelUrl = tunnel.mcpEndpoint;
-  } catch {}
-
-  if (!mcpToken) {
-    console.log("Not logged in yet. Run: bookmark-brain login");
-    process.exit(1);
-  }
-
-  const localUrl = `http://127.0.0.1:9876/mcp`;
-  const mcpUrl = tunnelUrl || localUrl;
-  const serverEntry = { url: mcpUrl, headers: { Authorization: `Bearer ${mcpToken}` } };
-
-  console.log(`\n  For Claude Code, run this command:\n`);
-  console.log(`    claude mcp add-json bookmark-brain '${JSON.stringify(serverEntry)}'\n`);
-
-  console.log(`  For Claude Desktop, add to ~/Library/Application Support/Claude/claude_desktop_config.json:\n`);
-  console.log(JSON.stringify({ mcpServers: { "bookmark-brain": serverEntry } }, null, 2));
-
-  if (!tunnelUrl) {
-    console.log(`\n  Note: using local URL (${localUrl}).`);
-    console.log(`  This works when Claude is on the same machine.`);
-    console.log(`  For remote access, run: bookmark-brain start (with TUNNEL_MODE=named in ~/.bookmark-brain/config)`);
-  }
-
-  console.log("");
+  console.log(`\n  Claude Code — run this command:\n`);
+  console.log(`    claude mcp add-json bookmark-brain '${JSON.stringify(entry)}'\n`);
 }
 
 async function main() {
@@ -86,16 +59,10 @@ async function main() {
   await fs.mkdir(DATA_ROOT, { recursive: true });
   await fs.mkdir(INBOX_DIR, { recursive: true });
 
-  // 1. Start MCP server (always on)
-  startMcpServer();
-
-  // 2. Start tunnel (if configured)
-  const tunnelProc = await startTunnel();
-
-  // 3. Start screenshot ingestion (osxphotos + inbox watcher)
+  // 1. Start screenshot ingestion (osxphotos + inbox watcher)
   await startScreenshots();
 
-  // 4. Start X bookmarks polling
+  // 2. Start X bookmarks polling
   const auth = await loadAuth();
   const hasLegacyAuth = process.env.X_BEARER_TOKEN && process.env.X_USER_ID;
 
@@ -121,7 +88,7 @@ async function main() {
     console.log("[bookmark-brain] X bookmarks disabled (run: bookmark-brain login)");
   }
 
-  // 5. Start processing loop
+  // 3. Start processing loop
   if (PROCESS_API_URL) {
     console.log(`[bookmark-brain] processing via ${PROCESS_API_URL}`);
     startProcessingLoop();
@@ -136,7 +103,6 @@ async function main() {
 
   const shutdown = () => {
     console.log("\n[bookmark-brain] shutting down...");
-    tunnelProc?.kill();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

@@ -25,7 +25,6 @@ export const TAGS_DIR = path.join(DATA_ROOT, "tags");
 export const STATE_DIR = path.join(DATA_ROOT, "state");
 export const INBOX_DIR = path.join(DATA_ROOT, "inbox");
 
-export const MCP_PORT = Number(process.env.MCP_PORT || 9876);
 export const X_POLL_INTERVAL_MS = 60_000;
 export const PROCESS_INTERVAL_MS = 5_000;
 export const SCREENSHOT_POLL_INTERVAL_MS = 60_000;

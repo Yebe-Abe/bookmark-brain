@@ -1,11 +1,9 @@
+import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import { SERVER_SECRET } from "../config.js";
-import { deriveApiKey } from "./keys.js";
 
-/**
- * Rate limiter. Tracks requests per IP with a sliding window.
- * No dependencies — just a Map with TTL cleanup.
- */
+// --- Rate limiting ---
+
 const hits = new Map<string, { count: number; resetAt: number }>();
 
 setInterval(() => {
@@ -38,13 +36,19 @@ export function rateLimit(windowMs: number, maxRequests: number) {
   };
 }
 
+// --- Auth ---
+
+/** Derive an API key from SERVER_SECRET + user ID. Stateless, no database. */
+export function deriveApiKey(userId: string): string {
+  return `bbk_${crypto.createHmac("sha256", SERVER_SECRET).update(`api:${userId}`).digest("hex")}`;
+}
+
 /**
- * Auth middleware. Requires Authorization: Bearer bbk_<key> header
- * and X-User-Id header. Validates the key matches the claimed user.
+ * Auth middleware. Requires Authorization: Bearer bbk_<key> + X-User-Id header.
  */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!SERVER_SECRET) {
-    res.status(500).json({ error: "Server not configured (missing SERVER_SECRET)" });
+    res.status(500).json({ error: "Server not configured" });
     return;
   }
 
@@ -53,7 +57,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   const userId = String(req.headers["x-user-id"] || "");
 
   if (!token || !userId) {
-    res.status(401).json({ error: "Missing Authorization header or X-User-Id header" });
+    res.status(401).json({ error: "Missing Authorization or X-User-Id header" });
     return;
   }
 
@@ -63,7 +67,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  // Attach userId to request for downstream use
   (req as Request & { userId: string }).userId = userId;
   next();
 }
