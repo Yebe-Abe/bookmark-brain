@@ -14,6 +14,7 @@ export interface KnowledgeItem {
   // Processed fields (filled after Claude processing)
   title: string;
   summary: string;
+  useCase: string;
   tags: string[];
   concepts: Concept[];
   entities: Entity[];
@@ -120,6 +121,7 @@ export async function ingestItem(opts: {
     contentHash: hash,
     title: "",
     summary: "",
+    useCase: "",
     tags: [],
     concepts: [],
     entities: [],
@@ -347,7 +349,8 @@ function formatIndexLine(item: KnowledgeItem): string {
   const source = item.source === "x_bookmark" ? "bookmark" : "screenshot";
   const tags = item.tags.length > 0 ? ` [${item.tags.join(", ")}]` : "";
   const author = item.author ? ` by ${item.author}` : "";
-  return `[${item.id}] (${source}${author}) ${item.title || "(unprocessed)"}${tags}\n  ${item.summary || item.rawText?.slice(0, 120) || ""}`;
+  const useCase = item.useCase ? `\n  Apply when: ${item.useCase}` : "";
+  return `[${item.id}] (${source}${author}) ${item.title || "(unprocessed)"}${tags}\n  ${item.summary || item.rawText?.slice(0, 120) || ""}${useCase}`;
 }
 
 function sanitizeFilename(name: string): string {

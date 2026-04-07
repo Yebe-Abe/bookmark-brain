@@ -1,7 +1,6 @@
 import { execFile, spawn } from "child_process";
 import path from "path";
 import fs from "fs/promises";
-import { watch } from "chokidar";
 import { INBOX_DIR, STATE_DIR, SCREENSHOT_POLL_INTERVAL_MS } from "../config.js";
 import { ingestItem, contentHash } from "../storage/store.js";
 
@@ -169,12 +168,18 @@ export async function startScreenshots(): Promise<void> {
   }
 
   console.log(`[screenshots] watching ${INBOX_DIR}`);
-  const watcher = watch(INBOX_DIR, {
-    ignoreInitial: false,
-    ignored: (p) => path.basename(p).startsWith("."),
-    awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
-    depth: 0,
-  });
+  try {
+    const { watch } = await import("chokidar");
+    const watcher = watch(INBOX_DIR, {
+      ignoreInitial: false,
+      ignored: (p: string) => path.basename(p).startsWith("."),
+      awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
+      depth: 0,
+    });
 
-  watcher.on("add", (filePath) => { ingestImageFile(filePath); });
+    watcher.on("add", (filePath: string) => { ingestImageFile(filePath); });
+  } catch {
+    console.log("[screenshots] chokidar not installed — inbox folder watching disabled");
+    console.log("[screenshots] install with: npm install chokidar");
+  }
 }

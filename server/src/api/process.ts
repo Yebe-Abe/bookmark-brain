@@ -15,9 +15,10 @@ Return JSON only, no markdown fencing:
 {
   "title": "Short descriptive title (< 10 words)",
   "summary": "1-2 sentence summary of the key insight or information",
+  "useCase": "When would someone apply this? What problem does it solve? What kind of project or situation makes this relevant? Be specific — e.g. 'when building a RAG pipeline and retrieval quality is low' not 'useful for AI'",
   "tags": ["tag1", "tag2"],
   "concepts": [
-    {"name": "concept name", "category": "ml_concept|tool|technique|pattern|other", "confidence": 0.9}
+    {"name": "concept name", "category": "ml_concept|tool|technique|pattern|architecture|workflow|other", "confidence": 0.9}
   ],
   "entities": [
     {"name": "Entity Name", "type": "person|tool|company|paper|repo", "handle": "@handle or null"}
@@ -28,6 +29,7 @@ Rules:
 - 3-7 lowercase tags, use underscores for multi-word (e.g. "transformer_architecture" not "ai")
 - Be specific with tags — prefer precise technical terms
 - Only include entities you're confident about
+- useCase is the most important field — think about WHEN this knowledge becomes actionable, not just what it is
 - For screenshots, extract any visible text, code, or key information into the summary`;
 
 const MAX_TEXT_LENGTH = 10_000;

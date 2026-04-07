@@ -46,6 +46,7 @@ async function processOne(item: KnowledgeItem): Promise<void> {
       const result = await processBookmark(item);
       item.title = result.title;
       item.summary = result.summary;
+      item.useCase = result.useCase || "";
       item.tags = result.tags;
       item.concepts = result.concepts;
       item.entities = result.entities;
@@ -60,6 +61,7 @@ async function processOne(item: KnowledgeItem): Promise<void> {
       const result = await processScreenshot(item, imagePath);
       item.title = result.title;
       item.summary = result.summary;
+      item.useCase = result.useCase || "";
       item.tags = result.tags;
       item.concepts = result.concepts;
       item.entities = result.entities;

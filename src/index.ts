@@ -2,9 +2,8 @@
 
 import fs from "fs/promises";
 import path from "path";
-import { DATA_ROOT, INBOX_DIR, STATE_DIR, X_POLL_INTERVAL_MS, PROCESS_API_URL } from "./config.js";
+import { DATA_ROOT, INBOX_DIR, STATE_DIR, X_POLL_INTERVAL_MS, PROCESS_API_URL, SCREENSHOTS_ENABLED } from "./config.js";
 import { pollBookmarks, loadAuth } from "./ingestion/x-bookmarks.js";
-import { startScreenshots } from "./ingestion/screenshots.js";
 import { startProcessingLoop } from "./processing/processor.js";
 import { login } from "./auth.js";
 import { installDaemon, uninstallDaemon, daemonStatus } from "./daemon.js";
@@ -92,7 +91,12 @@ async function main() {
   await fs.mkdir(INBOX_DIR, { recursive: true });
 
   // 1. Start screenshot ingestion (osxphotos + inbox watcher)
-  await startScreenshots();
+  if (SCREENSHOTS_ENABLED) {
+    const { startScreenshots } = await import("./ingestion/screenshots.js");
+    await startScreenshots();
+  } else {
+    console.log("[bookmark-brain] screenshots disabled (SCREENSHOTS=false)");
+  }
 
   // 2. Start X bookmarks polling
   const auth = await loadAuth();
