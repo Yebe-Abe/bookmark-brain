@@ -83,7 +83,7 @@ router.post("/", async (req: Request, res: Response) => {
         messages: [{
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: (imageMimeType || "image/png") as "image/png", data: imageBase64! } },
+            { type: "image", source: { type: "base64", media_type: (imageMimeType || "image/png") as "image/png" | "image/jpeg" | "image/webp" | "image/gif", data: imageBase64! } },
             { type: "text", text: `${EXTRACT_PROMPT}\n\nAlso include a "rawText" field with any text visible in the screenshot.` },
           ],
         }],

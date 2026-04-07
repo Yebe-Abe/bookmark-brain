@@ -39,15 +39,47 @@ Commands:
  * Uses stdio transport — Claude spawns the process directly.
  */
 async function printConfig(): Promise<void> {
+  const { execSync } = await import("child_process");
+
+  // Resolve absolute paths so Claude Desktop doesn't depend on shell PATH
+  let nodePath = process.execPath; // absolute path to current node binary
   const stdioServer = path.resolve(path.dirname(new URL(import.meta.url).pathname), "mcp", "stdio.js");
 
-  const entry = {
-    command: "node",
-    args: [stdioServer],
-  };
+  // On macOS, also try `which node` in case they're using a version manager
+  if (process.platform === "darwin") {
+    try {
+      const which = execSync("which node", { encoding: "utf8" }).trim();
+      if (which) nodePath = which;
+    } catch {}
+  }
 
-  console.log(`\n  Claude Desktop — add to ~/Library/Application Support/Claude/claude_desktop_config.json:\n`);
-  console.log(JSON.stringify({ mcpServers: { "bookmark-brain": entry } }, null, 2));
+  const entry = { command: nodePath, args: [stdioServer] };
+
+  // Auto-install into Claude Desktop config if on macOS
+  if (process.platform === "darwin") {
+    const desktopConfig = path.join(
+      process.env.HOME || "",
+      "Library", "Application Support", "Claude", "claude_desktop_config.json"
+    );
+
+    try {
+      let config: Record<string, unknown> = {};
+      try {
+        config = JSON.parse(await fs.readFile(desktopConfig, "utf8"));
+      } catch {}
+
+      const servers = (config.mcpServers || {}) as Record<string, unknown>;
+      servers["bookmark-brain"] = entry;
+      config.mcpServers = servers;
+
+      await fs.mkdir(path.dirname(desktopConfig), { recursive: true });
+      await fs.writeFile(desktopConfig, JSON.stringify(config, null, 2) + "\n", "utf8");
+      console.log(`\n  Claude Desktop: installed (restart Claude Desktop to pick it up)`);
+    } catch {
+      console.log(`\n  Claude Desktop — add to ${desktopConfig}:\n`);
+      console.log(JSON.stringify({ mcpServers: { "bookmark-brain": entry } }, null, 2));
+    }
+  }
 
   console.log(`\n  Claude Code — run this command:\n`);
   console.log(`    claude mcp add-json bookmark-brain '${JSON.stringify(entry)}'\n`);

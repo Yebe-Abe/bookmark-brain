@@ -55,4 +55,23 @@ const dest = path.join(binDir, BIN_NAME);
 
 fs.writeFileSync(dest, wrapper, { mode: 0o755 });
 console.log(`[setup] installed ${dest}`);
-console.log(`[setup] try: bookmark-brain help`);
+
+// Install osxphotos if on macOS and not already installed
+if (process.platform === "darwin") {
+  const { execSync } = await import("child_process");
+  try {
+    execSync("osxphotos version", { stdio: "pipe" });
+    console.log("[setup] osxphotos already installed");
+  } catch {
+    console.log("[setup] installing osxphotos (for iCloud screenshot import)...");
+    try {
+      execSync("pip3 install osxphotos", { stdio: "inherit" });
+      console.log("[setup] osxphotos installed");
+    } catch {
+      console.log("[setup] could not install osxphotos automatically");
+      console.log("[setup] install manually with: pip3 install osxphotos");
+    }
+  }
+}
+
+console.log(`[setup] done! try: bookmark-brain help`);

@@ -54,9 +54,9 @@ export async function saveAuth(auth: AuthState): Promise<void> {
   await fs.writeFile(AUTH_FILE, JSON.stringify(auth, null, 2) + "\n", { mode: 0o600 });
 }
 
-export function isAuthConfigured(): boolean {
-  // Check for either OAuth tokens file or legacy bearer token
-  return !!process.env.X_BEARER_TOKEN || fs.access(AUTH_FILE).then(() => true).catch(() => false) as unknown as boolean;
+export async function isAuthConfigured(): Promise<boolean> {
+  if (process.env.X_BEARER_TOKEN) return true;
+  try { await fs.access(AUTH_FILE); return true; } catch { return false; }
 }
 
 /**

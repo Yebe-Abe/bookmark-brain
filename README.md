@@ -1,8 +1,8 @@
 # bookmark-brain
 
-Personal knowledge base that pulls in your X/Twitter bookmarks and iCloud screenshots, processes them through Claude, and makes everything searchable via MCP.
+Personal knowledge base that automatically pulls your X/Twitter bookmarks and iCloud screenshots, processes them with Claude, and makes everything searchable from Claude Desktop and Claude Code.
 
-Your bookmarks and screenshots stay on your machine. Claude navigates them through a read-only peephole — it reads text indexes, decides what's relevant, and drills into specific items.
+Your data stays on your machine. Claude reads local indexes and drills into items — no cloud database, no uploads.
 
 ## How it works
 
@@ -11,138 +11,108 @@ X Bookmarks ──→ ┌──────────────────�
                 │  Your Mac (daemon)   │      │  Server (Railway) │
 iCloud Photos ─→│                      │ ───→ │  Claude processing │
                 │  Local storage       │ ←─── │  X OAuth          │
-                │  MCP server (:9876)  │      │  Tunnel provision │
-                └──────────┬───────────┘      └──────────────────┘
-                           │
-                  Cloudflare Tunnel
-                           │
-                    Claude Desktop / Code
+                │  MCP server (stdio)  │      └──────────────────┘
+                └──────────────────────┘
+                         ↑
+                  Claude Desktop / Code
+                  (spawns MCP directly)
 ```
 
-- **Daemon** runs on your Mac, polls for new bookmarks and screenshots
-- **Server** handles Claude API calls and X OAuth (you host it, users don't need API keys)
-- **MCP server** is read-only, locked to one directory, bearer token required
-- **Cloudflare tunnel** gives each user a stable URL that never changes
+- **Daemon** runs in the background on your Mac, pulling new bookmarks and screenshots automatically
+- **Server** handles X OAuth and Claude API calls so you don't need any API keys
+- **MCP server** is a local stdio process — Claude Desktop/Code spawns it directly to read your data
 
-## Setup
-
-### Prerequisites
-
-- Node.js 18+
-- Python 3 + `pip install osxphotos` (for iCloud screenshot ingestion)
-- `brew install cloudflared` (for remote MCP access, optional)
-
-### Install
+## Install
 
 ```bash
 git clone https://github.com/you/bookmark-brain
 cd bookmark-brain
 npm install && npm run setup
-source ~/.zshrc  # if first time, to pick up PATH change
+source ~/.zshrc
 ```
 
-### First-time setup
+Setup installs the `bookmark-brain` CLI, builds the project, and installs `osxphotos` for iCloud screenshot import.
+
+## Getting started
+
+### 1. Login with X
 
 ```bash
-# Login with X
 bookmark-brain login
 ```
 
-Opens your browser to authorize with X. Credentials are saved automatically.
+Your browser opens. Authorize with X. That's it — credentials are saved automatically.
+
+### 2. Start the daemon
 
 ```bash
-# Start the background daemon
 bookmark-brain start
 ```
 
-The daemon installs as a macOS Login Item. It:
-- Pulls the last 2 months of screenshots from iCloud Photos
-- Pulls all your X bookmarks
-- Processes everything through Claude
-- Starts the MCP server
-- Runs forever, survives reboots
+This installs a background service that runs forever and survives reboots. On first run it:
+- Imports the last 2 months of screenshots from your iCloud Photos library
+- Pulls your X bookmarks
+- Processes everything through Claude (tags, summaries, concepts)
+- After that, new bookmarks and screenshots are picked up automatically every 60 seconds
+
+Check daemon status anytime:
+```bash
+bookmark-brain status
+tail -f ~/.bookmark-brain/logs/stdout.log
+```
+
+### 3. Connect Claude
 
 ```bash
-# Get your MCP config
 bookmark-brain config
 ```
 
-Prints a JSON block to paste into your Claude Desktop or Claude Code config. Done.
+This auto-installs the MCP server into Claude Desktop (restart Claude Desktop to pick it up). For Claude Code, it prints a command you paste into your terminal.
 
-### Commands
+### 4. Use it
+
+Ask Claude anything about your saved content:
+
+- "What have I been bookmarking about LLMs?"
+- "I saved a screenshot of an error message yesterday, can you find it?"
+- "What did @karpathy tweet about that I bookmarked?"
+- "Show me everything tagged rust"
+
+Claude calls the MCP tools behind the scenes — browsing your indexes, finding relevant items, and pulling up full details including images.
+
+## Commands
 
 ```
 bookmark-brain login    Sign in with X (opens browser)
 bookmark-brain start    Install and start background daemon
 bookmark-brain stop     Stop and uninstall daemon
 bookmark-brain status   Check if daemon is running
-bookmark-brain config   Print MCP config for Claude
+bookmark-brain config   Connect Claude Desktop / Code to your data
+bookmark-brain help     Show all commands
 ```
 
-### Configuration
-
-Settings go in `~/.bookmark-brain/config`:
-
-```
-BOOKMARK_BRAIN_API_URL=https://your-server.up.railway.app
-TUNNEL_MODE=named
+Run without a command for foreground mode (useful for debugging):
+```bash
+bookmark-brain
 ```
 
-## Server deployment
+## What Claude can do
 
-The server handles X OAuth, Claude processing, and tunnel provisioning. Users never need API keys.
+Claude has 5 MCP tools to navigate your knowledge base:
 
-### Deploy to Railway
-
-1. Push to GitHub
-2. New Project → Deploy from GitHub → set Root Directory to `server`
-3. Set environment variables:
-
-| Variable | Description |
+| Tool | What it does |
 |---|---|
-| `SERVER_SECRET` | Random hex string. Derives all user keys. |
-| `SERVER_URL` | Your Railway public URL |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
-| `X_CLIENT_ID` | From X developer portal |
-| `X_CLIENT_SECRET` | From X developer portal |
-| `CF_API_TOKEN` | Cloudflare API token (Tunnel:Edit + DNS:Edit) |
-| `CF_ACCOUNT_ID` | Cloudflare account ID |
-| `CF_ZONE_ID` | Cloudflare zone ID |
-| `CF_TUNNEL_DOMAIN` | e.g. `mcp.yourdomain.com` |
+| `list_recent` | Shows the 50 most recently saved items with titles, tags, and sources |
+| `list_tags` | Shows all tags with item counts — discover what topics you've saved |
+| `get_by_tag` | Shows all items with a specific tag |
+| `get_item` | Full details for one item — metadata, extracted text, and images |
+| `list_month` | Browse items by month |
 
-Generate `SERVER_SECRET`:
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+There's no search engine. Claude IS the search engine — it reads the indexes, decides what's relevant, and drills into specific items.
 
-### Verify
+## How data is stored
 
-```bash
-curl https://your-server.up.railway.app/health
-```
-
-## Security
-
-- **Data stays local.** Bookmarks and screenshots are stored on the user's machine, never on the server.
-- **Read-only MCP.** The peephole server (~200 lines) only reads files from `~/.bookmark-brain/`. No writes, no path traversal.
-- **Bearer token auth.** MCP requests require a token. Without it, the tunnel endpoint returns 401.
-- **HMAC-derived keys.** API keys and tokens are computed from a server secret + user ID. Zero database, stateless, deterministic.
-- **Rate limiting.** All server endpoints are rate limited.
-- **Tunnel subdomains are not guessable.** Derived via HMAC, not based on usernames or sequential IDs.
-
-## How Claude searches your knowledge
-
-There's no search engine — Claude IS the search engine. The MCP tools give Claude access to plain-text index files:
-
-1. `list_recent` — what's been saved lately?
-2. `list_tags` — what topics exist?
-3. `get_by_tag` — all items with a specific tag
-4. `get_item` — full details + images for one item
-5. `list_month` — browse by time
-
-Claude reads the indexes, decides what's relevant, and drills down.
-
-## Data format
+Everything lives in `~/.bookmark-brain/` on your machine:
 
 ```
 ~/.bookmark-brain/
@@ -155,10 +125,45 @@ Claude reads the indexes, decides what's relevant, and drills down.
 │       ├── index.txt      # month index
 │       ├── bk-a1b2c3.../  # bookmark (meta.json + raw.json)
 │       └── ss-d4e5f6.../  # screenshot (meta.json + image + extracted.txt)
-├── inbox/                 # manual drops + osxphotos exports
-├── state/                 # auth, sync, tunnel credentials
+├── inbox/                 # manual screenshot drops + osxphotos exports
+├── state/                 # auth + sync state
 └── logs/                  # daemon logs
 ```
+
+You can also drop screenshots manually into `~/.bookmark-brain/inbox/` — they'll be picked up and processed automatically.
+
+## Server deployment (for operators)
+
+The server handles X OAuth and Claude processing so end users don't need API keys. Deploy once, serves all users.
+
+### Deploy to Railway
+
+1. Push to GitHub
+2. New Project → Deploy from GitHub → set Root Directory to `server`
+3. Set environment variables:
+
+| Variable | Description |
+|---|---|
+| `SERVER_SECRET` | Random hex string (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`) |
+| `SERVER_URL` | Your Railway public URL |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `X_CLIENT_ID` | From X developer portal |
+| `X_CLIENT_SECRET` | From X developer portal |
+
+### Verify
+
+```bash
+curl https://your-server.up.railway.app/health
+# → {"ok":true,"services":{"xOauth":true,"processing":true}}
+```
+
+## Security
+
+- **Data stays on your machine.** Bookmarks and screenshots are never stored on the server.
+- **Read-only MCP.** The stdio server only reads files from `~/.bookmark-brain/`. No writes, no network access, no path traversal.
+- **No API keys needed.** The server handles X OAuth and Claude API calls. Users never see or manage tokens.
+- **Rate limiting** on all server endpoints.
+- **Auth on processing.** API keys are derived via HMAC — stateless, no database.
 
 ## License
 
