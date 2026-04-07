@@ -169,7 +169,8 @@ export async function startScreenshots(): Promise<void> {
 
   console.log(`[screenshots] watching ${INBOX_DIR}`);
   try {
-    const { watch } = await import("chokidar");
+    const mod = "chokidar";
+    const { watch } = await import(/* webpackIgnore: true */ mod);
     const watcher = watch(INBOX_DIR, {
       ignoreInitial: false,
       ignored: (p: string) => path.basename(p).startsWith("."),

@@ -2,7 +2,7 @@
 
 import fs from "fs/promises";
 import path from "path";
-import { DATA_ROOT, INBOX_DIR, STATE_DIR, X_POLL_INTERVAL_MS, PROCESS_API_URL, SCREENSHOTS_ENABLED } from "./config.js";
+import { DATA_ROOT, X_POLL_INTERVAL_MS, PROCESS_API_URL, SCREENSHOTS_ENABLED } from "./config.js";
 import { pollBookmarks, loadAuth } from "./ingestion/x-bookmarks.js";
 import { startProcessingLoop } from "./processing/processor.js";
 import { login } from "./auth.js";
@@ -88,7 +88,6 @@ async function main() {
   console.log(`[bookmark-brain] data root: ${DATA_ROOT}`);
 
   await fs.mkdir(DATA_ROOT, { recursive: true });
-  await fs.mkdir(INBOX_DIR, { recursive: true });
 
   // 1. Start screenshot ingestion (osxphotos + inbox watcher)
   if (SCREENSHOTS_ENABLED) {
