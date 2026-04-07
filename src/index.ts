@@ -5,6 +5,7 @@ import { DATA_ROOT, X_POLL_INTERVAL_MS, PROCESS_API_URL } from "./config.js";
 import { pollBookmarks, loadAuth } from "./ingestion/x-bookmarks.js";
 import { processAll, startProcessingLoop } from "./processing/processor.js";
 import { login } from "./auth.js";
+import { installSchedule, removeSchedule, showSchedule } from "./schedule.js";
 
 const args = process.argv.slice(2);
 const command = args.find(a => !a.startsWith("-"));
@@ -12,15 +13,22 @@ const watch = args.includes("--watch");
 
 if (command === "login") {
   login().catch((err) => { console.error(err); process.exit(1); });
+} else if (command === "schedule") {
+  const timeArg = args[1];
+  const run = !timeArg ? showSchedule : timeArg === "off" ? removeSchedule : () => installSchedule(timeArg);
+  run().catch((err) => { console.error(err instanceof Error ? err.message : err); process.exit(1); });
 } else if (command === "help" || command === "--help") {
   console.log(`Usage: bookmark-brain [command] [options]
 
 Commands:
-  login       Sign in with X (opens browser)
-  (none)      Pull new bookmarks, process, save as markdown, exit
+  login            Sign in with X (opens browser)
+  schedule <time>  Run daily at a time (e.g. 7am, 2:30pm)
+  schedule off     Stop scheduled runs
+  schedule         Show current schedule
+  (none)           Pull new bookmarks, process, save as markdown, exit
 
 Options:
-  --watch     Keep running — poll for new bookmarks every 60s`);
+  --watch          Keep running — poll for new bookmarks every 60s`);
 } else {
   main().catch((err) => { console.error("[bookmark-brain] fatal:", err); process.exit(1); });
 }
