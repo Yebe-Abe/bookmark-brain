@@ -15,7 +15,6 @@ interface AuthState {
 }
 
 interface SyncState {
-  lastBookmarkId: string | null;
   lastPollTime: string | null;
 }
 
@@ -124,7 +123,7 @@ async function loadSync(): Promise<SyncState> {
     const text = await fs.readFile(SYNC_FILE, "utf8");
     return JSON.parse(text) as SyncState;
   } catch {
-    return { lastBookmarkId: null, lastPollTime: null };
+    return { lastPollTime: null };
   }
 }
 
@@ -149,10 +148,6 @@ export async function pollBookmarks(): Promise<number> {
     expansions: "author_id",
     max_results: "100",
   });
-
-  if (sync.lastBookmarkId) {
-    params.set("since_id", sync.lastBookmarkId);
-  }
 
   const response = await fetch(
     `https://api.x.com/2/users/${userId}/bookmarks?${params}`,
@@ -205,7 +200,6 @@ export async function pollBookmarks(): Promise<number> {
       console.log(`[x-bookmarks] ingested: ${tweet.text.slice(0, 80)}...`);
     }
 
-    sync.lastBookmarkId = tweet.id;
   }
 
   sync.lastPollTime = new Date().toISOString();
