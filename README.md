@@ -17,11 +17,10 @@ npm run setup
 ## Usage
 
 ```bash
-bookmark-brain login    # sign in with X (opens browser)
-bookmark-brain          # run — pulls bookmarks, processes, saves as markdown
+bookmark-brain login      # sign in with X (opens browser)
+bookmark-brain            # pull new bookmarks, process, save as markdown, exit
+bookmark-brain --watch    # same, but keep polling every 60s
 ```
-
-The process runs in the foreground, polling for new bookmarks every 60 seconds. Ctrl+C to stop.
 
 ## Output
 
