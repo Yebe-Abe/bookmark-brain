@@ -53,11 +53,6 @@ export async function saveAuth(auth: AuthState): Promise<void> {
   await fs.writeFile(AUTH_FILE, JSON.stringify(auth, null, 2) + "\n", { mode: 0o600 });
 }
 
-export async function isAuthConfigured(): Promise<boolean> {
-  if (process.env.X_BEARER_TOKEN) return true;
-  try { await fs.access(AUTH_FILE); return true; } catch { return false; }
-}
-
 /**
  * Refresh the access token via the server.
  */
@@ -136,11 +131,10 @@ async function saveSync(state: SyncState): Promise<void> {
 
 /**
  * Poll X bookmarks API for new bookmarks.
- * Returns count of newly ingested items.
+ * Returns count of newly ingested bookmarks.
  */
 export async function pollBookmarks(): Promise<number> {
   const { token, userId } = await getAccessToken();
-  const sync = await loadSync();
 
   const params = new URLSearchParams({
     "tweet.fields": "created_at,author_id,text",
@@ -163,8 +157,7 @@ export async function pollBookmarks(): Promise<number> {
   const body = (await response.json()) as BookmarkResponse;
 
   if (!body.data || body.data.length === 0) {
-    sync.lastPollTime = new Date().toISOString();
-    await saveSync(sync);
+    await saveSync({ lastPollTime: new Date().toISOString() });
     return 0;
   }
 
@@ -180,29 +173,21 @@ export async function pollBookmarks(): Promise<number> {
     const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
 
     const result = await ingestItem({
-      source: "x_bookmark",
       sourceId: tweet.id,
-      rawContent: JSON.stringify({
-        id: tweet.id,
-        text: tweet.text,
-        author: author?.username || null,
-        created_at: tweet.created_at || null,
-      }),
-      author: author ? `@${author.username}` : undefined,
+      text: tweet.text,
+      author: author ? `@${author.username}` : null,
       url: author
         ? `https://x.com/${author.username}/status/${tweet.id}`
-        : undefined,
-      createdAt: tweet.created_at,
+        : null,
+      createdAt: tweet.created_at || new Date().toISOString(),
     });
 
     if (result) {
       ingested++;
       console.log(`[x-bookmarks] ingested: ${tweet.text.slice(0, 80)}...`);
     }
-
   }
 
-  sync.lastPollTime = new Date().toISOString();
-  await saveSync(sync);
+  await saveSync({ lastPollTime: new Date().toISOString() });
   return ingested;
 }

@@ -8,37 +8,21 @@ import {
 import { processBookmark } from "./claude.js";
 
 async function processOne(item: PendingItem): Promise<void> {
-  console.log(`[processor] processing ${item.id}`);
+  console.log(`[processor] processing ${item.sourceId}`);
 
   try {
-    // Parse raw text from stored JSON
-    let text = item.rawText;
-    try {
-      const parsed = JSON.parse(text) as { text?: string };
-      if (parsed.text) text = parsed.text;
-    } catch {
-      // already plain text
-    }
-
-    const result = await processBookmark(text);
-    await saveProcessedItem(item, {
-      ...result,
-      rawText: text,
-      author: item.author,
-      url: item.url,
-      createdAt: item.createdAt,
-    });
-
-    console.log(`[processor] done: ${item.id} → "${result.title}"`);
+    const result = await processBookmark(item.text);
+    await saveProcessedItem(item, result);
+    console.log(`[processor] done: "${result.title}"`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[processor] error on ${item.id}: ${message}`);
+    console.error(`[processor] error on ${item.sourceId}: ${message}`);
     await markItemError(item, message);
   }
 }
 
 /**
- * Process all unprocessed items, then return.
+ * Process all pending items, then return.
  */
 export async function processAll(): Promise<number> {
   const items = await getUnprocessedItems();

@@ -1,14 +1,12 @@
 import fs from "fs/promises";
 import path from "path";
-import crypto from "crypto";
 import { DATA_ROOT, BOOKMARKS_DIR, TAGS_DIR, STATE_DIR } from "../config.js";
 
 // ----- Types -----
 
 export interface PendingItem {
-  id: string;
   sourceId: string;
-  rawText: string;
+  text: string;
   author: string | null;
   url: string | null;
   createdAt: string;
@@ -26,27 +24,19 @@ export interface Entity {
   handle?: string;
 }
 
-export interface ProcessedItem {
+export interface ProcessedResult {
   title: string;
   summary: string;
   useCase: string;
   tags: string[];
   concepts: Concept[];
   entities: Entity[];
-  rawText: string;
-  author: string | null;
-  url: string | null;
-  createdAt: string;
 }
 
 // ----- Helpers -----
 
 const PENDING_FILE = path.join(STATE_DIR, "pending.json");
 const SEEN_FILE = path.join(STATE_DIR, "seen.json");
-
-export function contentHash(content: string): string {
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
 
 function slugify(text: string, maxLen = 40): string {
   return text
@@ -74,7 +64,7 @@ async function writeJson(filePath: string, data: unknown): Promise<void> {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
-// ----- Seen set (dedup) -----
+// ----- Seen set (dedup by tweet ID) -----
 
 async function loadSeen(): Promise<Set<string>> {
   const arr = await readJsonSafe<string[]>(SEEN_FILE);
@@ -98,28 +88,25 @@ async function savePending(items: PendingItem[]): Promise<void> {
 // ----- Public: ingest -----
 
 export async function ingestItem(opts: {
-  source: "x_bookmark";
   sourceId: string;
-  rawContent: string;
-  author?: string;
-  url?: string;
-  createdAt?: string;
+  text: string;
+  author: string | null;
+  url: string | null;
+  createdAt: string;
 }): Promise<PendingItem | null> {
-  const hash = contentHash(opts.rawContent);
-
+  // Dedup by tweet ID
   const seen = await loadSeen();
-  if (seen.has(hash)) return null;
+  if (seen.has(opts.sourceId)) return null;
 
-  seen.add(hash);
+  seen.add(opts.sourceId);
   await saveSeen(seen);
 
   const item: PendingItem = {
-    id: `bk-${hash.slice(0, 12)}`,
     sourceId: opts.sourceId,
-    rawText: opts.rawContent,
-    author: opts.author || null,
-    url: opts.url || null,
-    createdAt: opts.createdAt || new Date().toISOString(),
+    text: opts.text,
+    author: opts.author,
+    url: opts.url,
+    createdAt: opts.createdAt,
   };
 
   const pending = await loadPending();
@@ -137,16 +124,15 @@ export async function getUnprocessedItems(): Promise<PendingItem[]> {
 
 export async function saveProcessedItem(
   pending: PendingItem,
-  result: ProcessedItem,
+  result: ProcessedResult,
 ): Promise<void> {
   const month = monthKey(pending.createdAt);
   const monthDir = path.join(BOOKMARKS_DIR, month);
   await fs.mkdir(monthDir, { recursive: true });
 
-  // Filename: slug from title + short hash for uniqueness
   const slug = slugify(result.title) || "bookmark";
-  const shortHash = pending.id.slice(3, 9); // 6 chars from the hash
-  const filename = `${slug}-${shortHash}.md`;
+  const shortId = pending.sourceId.slice(-6);
+  const filename = `${slug}-${shortId}.md`;
 
   await fs.writeFile(
     path.join(monthDir, filename),
@@ -156,23 +142,28 @@ export async function saveProcessedItem(
 
   // Remove from pending queue
   const items = await loadPending();
-  await savePending(items.filter((i) => i.id !== pending.id));
+  await savePending(items.filter((i) => i.sourceId !== pending.sourceId));
 
   // Update indexes
-  await updateTagIndexes(result, filename, month);
-  await updateMasterIndex();
+  await rebuildIndexes();
 }
 
 export async function markItemError(pending: PendingItem, error: string): Promise<void> {
-  console.error(`[store] error on ${pending.id}: ${error}`);
-  // Remove from pending so it doesn't block the queue
+  console.error(`[store] error processing ${pending.sourceId}: ${error}`);
+
+  // Remove from seen so it can be retried on next poll
+  const seen = await loadSeen();
+  seen.delete(pending.sourceId);
+  await saveSeen(seen);
+
+  // Remove from pending
   const items = await loadPending();
-  await savePending(items.filter((i) => i.id !== pending.id));
+  await savePending(items.filter((i) => i.sourceId !== pending.sourceId));
 }
 
 // ----- Markdown rendering -----
 
-function renderMarkdown(pending: PendingItem, result: ProcessedItem): string {
+function renderMarkdown(pending: PendingItem, result: ProcessedResult): string {
   const lines: string[] = [];
 
   lines.push("---");
@@ -187,8 +178,8 @@ function renderMarkdown(pending: PendingItem, result: ProcessedItem): string {
   lines.push(`# ${result.title}`);
   lines.push("");
 
-  if (result.rawText) {
-    for (const line of result.rawText.split("\n")) {
+  if (pending.text) {
+    for (const line of pending.text.split("\n")) {
       lines.push(`> ${line}`);
     }
     lines.push("");
@@ -241,11 +232,10 @@ function parseFrontmatter(content: string): Record<string, string> {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return fm;
   for (const line of match[1]!.split("\n")) {
-    const eq = line.indexOf(":");
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim();
-    let val = line.slice(eq + 1).trim();
-    // Strip surrounding quotes
+    const colon = line.indexOf(":");
+    if (colon === -1) continue;
+    const key = line.slice(0, colon).trim();
+    let val = line.slice(colon + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
@@ -255,7 +245,6 @@ function parseFrontmatter(content: string): Record<string, string> {
 }
 
 function parseSummaryFromBody(content: string): string {
-  // Summary is the first plain paragraph after the blockquote
   const afterFm = content.replace(/^---[\s\S]*?---\n*/, "");
   const lines = afterFm.split("\n");
   let pastTitle = false;
@@ -297,7 +286,7 @@ async function loadAllBookmarks(): Promise<IndexEntry[]> {
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean);
-      entries.push({
+      const entry: IndexEntry = {
         title: fm.title || file,
         date: fm.date || month,
         author: fm.author || "",
@@ -305,10 +294,10 @@ async function loadAllBookmarks(): Promise<IndexEntry[]> {
         summary: parseSummaryFromBody(content),
         useCase: "",
         file: `${month}/${file}`,
-      });
-      // Extract useCase from content
+      };
       const ucMatch = content.match(/\*\*Apply when:\*\* (.+)/);
-      if (ucMatch) entries[entries.length - 1]!.useCase = ucMatch[1]!;
+      if (ucMatch) entry.useCase = ucMatch[1]!;
+      entries.push(entry);
     }
   }
 
@@ -322,15 +311,22 @@ function formatIndexLine(e: IndexEntry): string {
   return `${e.file}${author} — ${e.title}${tags}\n  ${e.summary}${useCase}`;
 }
 
-async function updateTagIndexes(
-  result: ProcessedItem,
-  filename: string,
-  month: string,
-): Promise<void> {
-  await fs.mkdir(TAGS_DIR, { recursive: true });
-
-  // Rebuild all tag files from scratch for correctness
+async function rebuildIndexes(): Promise<void> {
   const all = await loadAllBookmarks();
+
+  // Master index (50 most recent)
+  const recent = all
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 50);
+  await fs.mkdir(DATA_ROOT, { recursive: true });
+  await fs.writeFile(
+    path.join(DATA_ROOT, "index.txt"),
+    recent.map(formatIndexLine).join("\n") + "\n",
+    "utf8",
+  );
+
+  // Tag indexes
+  await fs.mkdir(TAGS_DIR, { recursive: true });
   const tagMap = new Map<string, IndexEntry[]>();
   for (const entry of all) {
     for (const tag of entry.tags) {
@@ -340,7 +336,14 @@ async function updateTagIndexes(
     }
   }
 
-  // Write individual tag files
+  // Clean old tag files then write fresh
+  try {
+    const oldFiles = await fs.readdir(TAGS_DIR);
+    for (const f of oldFiles) {
+      await fs.unlink(path.join(TAGS_DIR, f));
+    }
+  } catch {}
+
   for (const [tag, entries] of tagMap) {
     const lines = entries
       .sort((a, b) => b.date.localeCompare(a.date))
@@ -352,28 +355,12 @@ async function updateTagIndexes(
     );
   }
 
-  // Write tag index
   const tagCounts = [...tagMap.entries()]
     .map(([tag, entries]) => [tag, entries.length] as [string, number])
     .sort((a, b) => b[1] - a[1]);
   await fs.writeFile(
     path.join(TAGS_DIR, "index.txt"),
     tagCounts.map(([tag, count]) => `${tag} (${count})`).join("\n") + "\n",
-    "utf8",
-  );
-}
-
-async function updateMasterIndex(): Promise<void> {
-  const all = await loadAllBookmarks();
-  const recent = all
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 50);
-
-  const lines = recent.map(formatIndexLine);
-  await fs.mkdir(DATA_ROOT, { recursive: true });
-  await fs.writeFile(
-    path.join(DATA_ROOT, "index.txt"),
-    lines.join("\n") + "\n",
     "utf8",
   );
 }
