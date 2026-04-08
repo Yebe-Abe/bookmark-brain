@@ -179,8 +179,8 @@ export async function pollBookmarks(): Promise<number> {
   for (const tweet of tweets) {
     const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
 
-    // Use note_tweet for full text of long tweets, fall back to text
-    const fullText = tweet.note_tweet?.text || tweet.text;
+    // Use article plain_text for X Articles, note_tweet for long tweets, fall back to text
+    const fullText = (tweet.article as any)?.plain_text || tweet.note_tweet?.text || tweet.text;
 
     // Log article field if present
     if (tweet.article) {
