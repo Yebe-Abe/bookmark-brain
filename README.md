@@ -19,8 +19,6 @@ npm run setup
 ```bash
 bookmark-brain login          # sign in with X (opens browser)
 bookmark-brain                # pull new bookmarks, process, save as markdown, exit
-bookmark-brain schedule 7am   # run every day at 7am
-bookmark-brain schedule off   # stop scheduled runs
 bookmark-brain --watch        # keep polling every 60s (instead of one-shot)
 ```
 
