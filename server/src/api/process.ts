@@ -10,12 +10,11 @@ const router = Router();
 router.use(requireAuth);
 router.use(rateLimit(60_000, 30));
 
-const EXTRACT_PROMPT = `Analyze the following content (a tweet and optionally a linked article) and extract metadata.
+const EXTRACT_PROMPT = `Analyze the following content (a tweet and optionally a linked article) and extract metadata only.
 
 Return JSON only, no markdown fencing:
 {
   "title": "Short descriptive title (< 10 words)",
-  "articleContent": "If an article was provided, write a clear, readable summary of its key points (3-10 sentences). Preserve specific details, numbers, and technical terms. If no article was provided, leave this as an empty string.",
   "tags": ["tag1", "tag2"],
   "concepts": [
     {"name": "concept name", "category": "ml_concept|tool|technique|pattern|architecture|workflow|other", "confidence": 0.9}
@@ -28,8 +27,7 @@ Return JSON only, no markdown fencing:
 Rules:
 - 3-7 lowercase tags, use underscores for multi-word (e.g. "transformer_architecture" not "ai")
 - Be specific with tags — prefer precise technical terms
-- Only include entities you're confident about
-- articleContent should distill the article into its key insights, not just repeat the title`;
+- Only include entities you're confident about`;
 
 const MAX_TEXT_LENGTH = 20_000;
 
@@ -86,10 +84,9 @@ router.post("/", async (req: Request, res: Response) => {
     const cleaned = responseText.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
     const parsed = JSON.parse(cleaned);
 
-    // Include the source URL in the response
-    if (extracted) {
-      parsed.sourceUrl = extracted.sourceUrl;
-    }
+    // Pass through the raw extracted article content and source URL
+    parsed.articleContent = extracted ? extracted.text : "";
+    parsed.sourceUrl = extracted ? extracted.sourceUrl : "";
 
     res.json(parsed);
   } catch (err) {
