@@ -2,7 +2,7 @@
 
 Pull your X/Twitter bookmarks, process them with Claude, and save as markdown files on your local filesystem.
 
-Every bookmark gets tagged and annotated — tweets, X Articles, and linked content all get captured. Your data stays on your machine.
+Every bookmark gets tagged and annotated including tweets, X Articles, and linked content.
 
 ## Quick Start (Claude Cowork)
 
