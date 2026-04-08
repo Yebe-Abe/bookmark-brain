@@ -24,6 +24,7 @@ interface BookmarkTweet {
   author_id?: string;
   created_at?: string;
   note_tweet?: { text: string };
+  article?: unknown;
   entities?: {
     urls?: Array<{ url: string; expanded_url: string; display_url: string }>;
   };
@@ -136,7 +137,7 @@ export async function pollBookmarks(): Promise<number> {
   const { token, userId } = await getAccessToken();
 
   const params = new URLSearchParams({
-    "tweet.fields": "created_at,author_id,text,entities,note_tweet",
+    "tweet.fields": "created_at,author_id,text,entities,note_tweet,article",
     "user.fields": "username",
     expansions: "author_id",
     max_results: "100",
@@ -181,10 +182,17 @@ export async function pollBookmarks(): Promise<number> {
     // Use note_tweet for full text of long tweets, fall back to text
     const fullText = tweet.note_tweet?.text || tweet.text;
 
-    // Extract expanded URLs from entities (already resolved by X, no t.co)
-    const expandedUrls = (tweet.entities?.urls || [])
+    // Log article field if present
+    if (tweet.article) {
+      console.log(`[x-bookmarks] tweet ${tweet.id} article:`, JSON.stringify(tweet.article));
+    }
+
+    // Extract expanded URLs from entities (resolved by X)
+    const rawEntities = tweet.entities?.urls || [];
+    console.log(`[x-bookmarks] tweet ${tweet.id} entities.urls:`, JSON.stringify(rawEntities));
+    const expandedUrls = rawEntities
       .map((u) => u.expanded_url)
-      .filter((u) => u && !u.includes("t.co"));
+      .filter(Boolean);
 
     const result = await ingestItem({
       sourceId: tweet.id,
