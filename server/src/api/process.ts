@@ -36,9 +36,10 @@ const MAX_TEXT_LENGTH = 20_000;
  * Requires: Authorization: Bearer bbk_<key> + X-User-Id header
  */
 router.post("/", async (req: Request, res: Response) => {
-  const { type, text } = req.body as {
+  const { type, text, xAccessToken } = req.body as {
     type?: string;
     text?: string;
+    xAccessToken?: string;
   };
 
   if (type !== "bookmark") {
@@ -53,11 +54,14 @@ router.post("/", async (req: Request, res: Response) => {
     if (!ANTHROPIC_API_KEY) { res.status(500).json({ error: "Processing not configured" }); return; }
 
     // Extract content from any URLs in the tweet
+    console.log(`[process] processing text (${text.length} chars), xAccessToken: ${xAccessToken ? "present" : "MISSING"}`);
     let extracted: { sourceUrl: string; text: string } | null = null;
     try {
-      extracted = await extractFromUrls(text);
+      extracted = await extractFromUrls(text, xAccessToken || "");
       if (extracted) {
         console.log(`[process] extracted ${extracted.text.length} chars from ${extracted.sourceUrl}`);
+      } else {
+        console.log(`[process] no content extracted from URLs`);
       }
     } catch (err) {
       console.error("[process] URL extraction failed:", (err as Error).message);

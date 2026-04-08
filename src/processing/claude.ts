@@ -3,14 +3,22 @@ import path from "path";
 import { PROCESS_API_URL, STATE_DIR } from "../config.js";
 import type { Concept, Entity } from "../storage/store.js";
 
-async function loadAuthHeaders(): Promise<Record<string, string>> {
+interface AuthInfo {
+  headers: Record<string, string>;
+  xAccessToken: string;
+}
+
+async function loadAuth(): Promise<AuthInfo> {
   try {
     const auth = JSON.parse(await fs.readFile(path.join(STATE_DIR, "x-auth.json"), "utf8"));
     if (auth.apiKey && auth.userId) {
-      return { "Authorization": `Bearer ${auth.apiKey}`, "X-User-Id": auth.userId };
+      return {
+        headers: { "Authorization": `Bearer ${auth.apiKey}`, "X-User-Id": auth.userId },
+        xAccessToken: auth.accessToken || "",
+      };
     }
   } catch {}
-  return {};
+  return { headers: {}, xAccessToken: "" };
 }
 
 export interface ExtractResult {
@@ -36,11 +44,11 @@ function parseExtractResponse(text: string): ExtractResult {
 }
 
 export async function processBookmark(text: string): Promise<ExtractResult> {
-  const authHeaders = await loadAuthHeaders();
+  const auth = await loadAuth();
   const res = await fetch(`${PROCESS_API_URL}/api/process`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders },
-    body: JSON.stringify({ type: "bookmark", text }),
+    headers: { "Content-Type": "application/json", ...auth.headers },
+    body: JSON.stringify({ type: "bookmark", text, xAccessToken: auth.xAccessToken }),
   });
   if (!res.ok) {
     throw new Error(`Processing failed: ${res.status} ${await res.text()}`);
