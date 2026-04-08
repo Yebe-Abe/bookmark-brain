@@ -11,7 +11,7 @@ async function processOne(item: PendingItem): Promise<void> {
   console.log(`[processor] processing ${item.sourceId}`);
 
   try {
-    const result = await processBookmark(item.text);
+    const result = await processBookmark(item.text, item.expandedUrls || []);
     await saveProcessedItem(item, result);
     console.log(`[processor] done: "${result.title}"`);
   } catch (err) {

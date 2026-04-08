@@ -10,6 +10,7 @@ export interface PendingItem {
   author: string | null;
   url: string | null;
   createdAt: string;
+  expandedUrls: string[];
 }
 
 export interface Concept {
@@ -91,6 +92,7 @@ export async function ingestItem(opts: {
   author: string | null;
   url: string | null;
   createdAt: string;
+  expandedUrls: string[];
 }): Promise<PendingItem | null> {
   await load();
 
@@ -104,6 +106,7 @@ export async function ingestItem(opts: {
     author: opts.author,
     url: opts.url,
     createdAt: opts.createdAt,
+    expandedUrls: opts.expandedUrls || [],
   };
   pending!.push(item);
 

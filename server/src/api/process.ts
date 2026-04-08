@@ -36,9 +36,10 @@ const MAX_TEXT_LENGTH = 20_000;
  * Requires: Authorization: Bearer bbk_<key> + X-User-Id header
  */
 router.post("/", async (req: Request, res: Response) => {
-  const { type, text, xAccessToken } = req.body as {
+  const { type, text, expandedUrls, xAccessToken } = req.body as {
     type?: string;
     text?: string;
+    expandedUrls?: string[];
     xAccessToken?: string;
   };
 
@@ -57,7 +58,7 @@ router.post("/", async (req: Request, res: Response) => {
     console.log(`[process] processing text (${text.length} chars), xAccessToken: ${xAccessToken ? "present" : "MISSING"}`);
     let extracted: { sourceUrl: string; text: string } | null = null;
     try {
-      extracted = await extractFromUrls(text, xAccessToken || "");
+      extracted = await extractFromUrls(expandedUrls || [], xAccessToken || "");
       if (extracted) {
         console.log(`[process] extracted ${extracted.text.length} chars from ${extracted.sourceUrl}`);
       } else {

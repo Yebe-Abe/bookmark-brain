@@ -6,8 +6,6 @@
  * For other URLs: fetch HTML and extract readable text.
  */
 
-const URL_RE = /https?:\/\/[^\s)]+/g;
-
 // Matches x.com or twitter.com status URLs → extract tweet ID
 const X_STATUS_RE = /(?:x\.com|twitter\.com)\/\w+\/status\/(\d+)/;
 
@@ -26,26 +24,19 @@ export interface ExtractedContent {
 }
 
 /**
- * Find URLs in text and extract content from the first one that works.
+ * Extract content from pre-resolved URLs (expanded_url from X API entities).
  * xAccessToken is needed to fetch tweets via the X API.
  */
 export async function extractFromUrls(
-  text: string,
+  urls: string[],
   xAccessToken: string,
 ): Promise<ExtractedContent | null> {
-  const urls = text.match(URL_RE);
   if (!urls || urls.length === 0) return null;
 
-  for (const rawUrl of urls) {
+  for (const url of urls) {
     try {
-      // Step 1: resolve t.co (or any) redirect to get the real URL
-      console.log(`[extract] resolving ${rawUrl}`);
-      const resolved = await resolveRedirect(rawUrl);
-      const targetUrl = resolved || rawUrl;
-      console.log(`[extract] resolved to ${targetUrl}`);
-
-      // Step 2: check if it's an X/Twitter status URL
-      const tweetId = extractTweetId(targetUrl);
+      // Check if it's an X/Twitter status URL
+      const tweetId = extractTweetId(url);
       if (tweetId) {
         console.log(`[extract] detected tweet ID ${tweetId}, fetching via X API`);
         const result = await fetchTweetViaApi(tweetId, xAccessToken);
@@ -57,39 +48,20 @@ export async function extractFromUrls(
         continue;
       }
 
-      // Step 3: non-X URL — fetch HTML and extract text
-      console.log(`[extract] fetching HTML from ${targetUrl}`);
-      const result = await fetchAndExtractHtml(targetUrl);
+      // Non-X URL — fetch HTML and extract text
+      console.log(`[extract] fetching HTML from ${url}`);
+      const result = await fetchAndExtractHtml(url);
       if (result && result.text.length > 50) {
-        console.log(`[extract] got ${result.text.length} chars from ${targetUrl}`);
+        console.log(`[extract] got ${result.text.length} chars from ${url}`);
         return result;
       }
-      console.log(`[extract] no usable content from ${targetUrl}`);
+      console.log(`[extract] no usable content from ${url}`);
     } catch (err) {
-      console.error(`[extract] failed for ${rawUrl}:`, (err as Error).message);
+      console.error(`[extract] failed for ${url}:`, (err as Error).message);
     }
   }
 
   return null;
-}
-
-// --- URL resolution ---
-
-/**
- * Follow redirects to get the final URL. Uses HEAD to avoid downloading the body.
- */
-async function resolveRedirect(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      method: "HEAD",
-      redirect: "follow",
-      signal: AbortSignal.timeout(10_000),
-    });
-    // res.url is the final URL after all redirects
-    return res.url !== url ? res.url : null;
-  } catch {
-    return null;
-  }
 }
 
 function extractTweetId(url: string): string | null {

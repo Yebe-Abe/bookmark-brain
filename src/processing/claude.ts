@@ -43,12 +43,12 @@ function parseExtractResponse(text: string): ExtractResult {
   };
 }
 
-export async function processBookmark(text: string): Promise<ExtractResult> {
+export async function processBookmark(text: string, expandedUrls: string[] = []): Promise<ExtractResult> {
   const auth = await loadAuth();
   const res = await fetch(`${PROCESS_API_URL}/api/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...auth.headers },
-    body: JSON.stringify({ type: "bookmark", text, xAccessToken: auth.xAccessToken }),
+    body: JSON.stringify({ type: "bookmark", text, expandedUrls, xAccessToken: auth.xAccessToken }),
   });
   if (!res.ok) {
     throw new Error(`Processing failed: ${res.status} ${await res.text()}`);

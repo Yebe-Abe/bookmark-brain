@@ -23,6 +23,10 @@ interface BookmarkTweet {
   text: string;
   author_id?: string;
   created_at?: string;
+  note_tweet?: { text: string };
+  entities?: {
+    urls?: Array<{ url: string; expanded_url: string; display_url: string }>;
+  };
 }
 
 interface BookmarkUser {
@@ -132,7 +136,7 @@ export async function pollBookmarks(): Promise<number> {
   const { token, userId } = await getAccessToken();
 
   const params = new URLSearchParams({
-    "tweet.fields": "created_at,author_id,text",
+    "tweet.fields": "created_at,author_id,text,entities,note_tweet",
     "user.fields": "username",
     expansions: "author_id",
     max_results: "100",
@@ -174,14 +178,23 @@ export async function pollBookmarks(): Promise<number> {
   for (const tweet of tweets) {
     const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
 
+    // Use note_tweet for full text of long tweets, fall back to text
+    const fullText = tweet.note_tweet?.text || tweet.text;
+
+    // Extract expanded URLs from entities (already resolved by X, no t.co)
+    const expandedUrls = (tweet.entities?.urls || [])
+      .map((u) => u.expanded_url)
+      .filter((u) => u && !u.includes("t.co"));
+
     const result = await ingestItem({
       sourceId: tweet.id,
-      text: tweet.text,
+      text: fullText,
       author: author ? `@${author.username}` : null,
       url: author
         ? `https://x.com/${author.username}/status/${tweet.id}`
         : null,
       createdAt: tweet.created_at || new Date().toISOString(),
+      expandedUrls,
     });
 
     if (result) {
