@@ -26,8 +26,8 @@ export interface Entity {
 
 export interface ProcessedResult {
   title: string;
-  summary: string;
-  useCase: string;
+  articleContent: string;
+  sourceUrl: string;
   tags: string[];
   concepts: Concept[];
   entities: Entity[];
@@ -170,11 +170,9 @@ function renderMarkdown(item: PendingItem, result: ProcessedResult): string {
   lines.push(`date: ${item.createdAt.split("T")[0]}`);
   if (item.author) lines.push(`author: ${JSON.stringify(item.author)}`);
   if (item.url) lines.push(`url: ${JSON.stringify(item.url)}`);
+  if (result.sourceUrl) lines.push(`source_url: ${JSON.stringify(result.sourceUrl)}`);
   if (result.tags.length) lines.push(`tags: [${result.tags.join(", ")}]`);
   lines.push("---");
-  lines.push("");
-
-  lines.push(`# ${result.title}`);
   lines.push("");
 
   if (item.text) {
@@ -184,13 +182,8 @@ function renderMarkdown(item: PendingItem, result: ProcessedResult): string {
     lines.push("");
   }
 
-  if (result.summary) {
-    lines.push(result.summary);
-    lines.push("");
-  }
-
-  if (result.useCase) {
-    lines.push(`**Apply when:** ${result.useCase}`);
+  if (result.articleContent) {
+    lines.push(result.articleContent);
     lines.push("");
   }
 
@@ -221,8 +214,7 @@ interface IndexEntry {
   date: string;
   author: string;
   tags: string[];
-  summary: string;
-  useCase: string;
+  sourceUrl: string;
   file: string;
 }
 
@@ -241,23 +233,6 @@ function parseFrontmatter(content: string): Record<string, string> {
     fm[key] = val;
   }
   return fm;
-}
-
-function parseSummaryFromBody(content: string): string {
-  const afterFm = content.replace(/^---[\s\S]*?---\n*/, "");
-  const lines = afterFm.split("\n");
-  let pastTitle = false;
-  let pastQuote = false;
-  for (const line of lines) {
-    if (line.startsWith("# ")) { pastTitle = true; continue; }
-    if (!pastTitle) continue;
-    if (line.startsWith("> ")) { pastQuote = true; continue; }
-    if (!pastQuote) continue;
-    if (line.trim() === "") continue;
-    if (line.startsWith("**") || line.startsWith("## ")) break;
-    return line.trim();
-  }
-  return "";
 }
 
 async function loadAllBookmarks(): Promise<IndexEntry[]> {
@@ -290,12 +265,9 @@ async function loadAllBookmarks(): Promise<IndexEntry[]> {
         date: fm.date || month,
         author: fm.author || "",
         tags,
-        summary: parseSummaryFromBody(content),
-        useCase: "",
+        sourceUrl: fm.source_url || "",
         file: `${month}/${file}`,
       };
-      const ucMatch = content.match(/\*\*Apply when:\*\* (.+)/);
-      if (ucMatch) entry.useCase = ucMatch[1]!;
       entries.push(entry);
     }
   }
@@ -306,8 +278,8 @@ async function loadAllBookmarks(): Promise<IndexEntry[]> {
 function formatIndexLine(e: IndexEntry): string {
   const tags = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
   const author = e.author ? ` by ${e.author}` : "";
-  const useCase = e.useCase ? `\n  Apply when: ${e.useCase}` : "";
-  return `${e.file}${author} — ${e.title}${tags}\n  ${e.summary}${useCase}`;
+  const source = e.sourceUrl ? `\n  ${e.sourceUrl}` : "";
+  return `${e.file}${author} — ${e.title}${tags}${source}`;
 }
 
 async function rebuildIndexes(): Promise<void> {

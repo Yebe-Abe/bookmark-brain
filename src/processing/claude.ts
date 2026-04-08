@@ -15,8 +15,8 @@ async function loadAuthHeaders(): Promise<Record<string, string>> {
 
 export interface ExtractResult {
   title: string;
-  summary: string;
-  useCase: string;
+  articleContent: string;
+  sourceUrl: string;
   tags: string[];
   concepts: Concept[];
   entities: Entity[];
@@ -27,8 +27,8 @@ function parseExtractResponse(text: string): ExtractResult {
   const parsed = JSON.parse(cleaned) as ExtractResult;
   return {
     title: parsed.title || "Untitled",
-    summary: parsed.summary || "",
-    useCase: parsed.useCase || "",
+    articleContent: parsed.articleContent || "",
+    sourceUrl: parsed.sourceUrl || "",
     tags: (parsed.tags || []).map((t) => t.toLowerCase().trim()).filter(Boolean),
     concepts: parsed.concepts || [],
     entities: parsed.entities || [],

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { ANTHROPIC_API_KEY } from "../config.js";
 import { requireAuth, rateLimit } from "../auth/middleware.js";
+import { extractFromUrls } from "./extract.js";
 
 const router = Router();
 
@@ -9,13 +10,12 @@ const router = Router();
 router.use(requireAuth);
 router.use(rateLimit(60_000, 30));
 
-const EXTRACT_PROMPT = `Analyze this content and extract structured knowledge.
+const EXTRACT_PROMPT = `Analyze the following content (a tweet and optionally a linked article) and extract metadata.
 
 Return JSON only, no markdown fencing:
 {
   "title": "Short descriptive title (< 10 words)",
-  "summary": "1-2 sentence summary of the key insight or information",
-  "useCase": "When would someone apply this? What problem does it solve? What kind of project or situation makes this relevant? Be specific — e.g. 'when building a RAG pipeline and retrieval quality is low' not 'useful for AI'",
+  "articleContent": "If an article was provided, write a clear, readable summary of its key points (3-10 sentences). Preserve specific details, numbers, and technical terms. If no article was provided, leave this as an empty string.",
   "tags": ["tag1", "tag2"],
   "concepts": [
     {"name": "concept name", "category": "ml_concept|tool|technique|pattern|architecture|workflow|other", "confidence": 0.9}
@@ -29,9 +29,9 @@ Rules:
 - 3-7 lowercase tags, use underscores for multi-word (e.g. "transformer_architecture" not "ai")
 - Be specific with tags — prefer precise technical terms
 - Only include entities you're confident about
-- useCase is the most important field — think about WHEN this knowledge becomes actionable, not just what it is`;
+- articleContent should distill the article into its key insights, not just repeat the title`;
 
-const MAX_TEXT_LENGTH = 10_000;
+const MAX_TEXT_LENGTH = 20_000;
 
 /**
  * POST /api/process
@@ -53,12 +53,30 @@ router.post("/", async (req: Request, res: Response) => {
 
   try {
     if (!ANTHROPIC_API_KEY) { res.status(500).json({ error: "Processing not configured" }); return; }
+
+    // Extract content from any URLs in the tweet
+    let extracted: { sourceUrl: string; text: string } | null = null;
+    try {
+      extracted = await extractFromUrls(text);
+      if (extracted) {
+        console.log(`[process] extracted ${extracted.text.length} chars from ${extracted.sourceUrl}`);
+      }
+    } catch (err) {
+      console.error("[process] URL extraction failed:", (err as Error).message);
+    }
+
+    // Build the content for Claude
+    let contentForClaude = `Tweet:\n${text}`;
+    if (extracted) {
+      contentForClaude += `\n\nLinked article (from ${extracted.sourceUrl}):\n${extracted.text}`;
+    }
+
     const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: `${EXTRACT_PROMPT}\n\nContent to analyze:\n${text}` }],
+      max_tokens: 2048,
+      messages: [{ role: "user", content: `${EXTRACT_PROMPT}\n\n${contentForClaude}` }],
     });
 
     const responseText = response.content
@@ -66,7 +84,14 @@ router.post("/", async (req: Request, res: Response) => {
       .map((b) => b.text).join("");
 
     const cleaned = responseText.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    res.json(JSON.parse(cleaned));
+    const parsed = JSON.parse(cleaned);
+
+    // Include the source URL in the response
+    if (extracted) {
+      parsed.sourceUrl = extracted.sourceUrl;
+    }
+
+    res.json(parsed);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[process] error:", msg);
