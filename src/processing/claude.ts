@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { PROCESS_API_URL, STATE_DIR } from "../config.js";
 import type { Concept, Entity } from "../storage/store.js";
+import { getAccessToken } from "../ingestion/x-bookmarks.js";
 
 interface AuthInfo {
   headers: Record<string, string>;
@@ -11,10 +12,12 @@ interface AuthInfo {
 async function loadAuth(): Promise<AuthInfo> {
   try {
     const auth = JSON.parse(await fs.readFile(path.join(STATE_DIR, "x-auth.json"), "utf8"));
+    // Get a fresh (refreshed if needed) X access token
+    const { token } = await getAccessToken();
     if (auth.apiKey && auth.userId) {
       return {
         headers: { "Authorization": `Bearer ${auth.apiKey}`, "X-User-Id": auth.userId },
-        xAccessToken: auth.accessToken || "",
+        xAccessToken: token,
       };
     }
   } catch {}

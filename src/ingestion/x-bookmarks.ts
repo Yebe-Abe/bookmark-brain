@@ -95,7 +95,7 @@ async function refreshTokens(auth: AuthState): Promise<AuthState> {
 /**
  * Get a valid access token, refreshing if needed.
  */
-async function getAccessToken(): Promise<{ token: string; userId: string }> {
+export async function getAccessToken(): Promise<{ token: string; userId: string }> {
   let auth = await loadAuth();
   if (!auth) {
     throw new Error("Not authenticated with X. Run: bookmark-brain login");
