@@ -2,11 +2,18 @@
 
 Pull your X/Twitter bookmarks, process them with Claude, and save as markdown files on your local filesystem.
 
-Every bookmark gets tagged, summarized, and annotated with 'when it's useful' structured knowledge you can grep, browse, or feed into other tools.
+Every bookmark gets tagged and annotated — tweets, X Articles, and linked content all get captured. Your data stays on your machine.
 
-Your data stays on your machine. No cloud database, no uploads.
+## Quick Start (Claude Cowork)
 
-## Install
+If you use [Claude Cowork](https://claude.ai/cowork):
+
+1. Download [`bookmark-brain.skill`](bookmark-brain.skill) and add it to your Cowork skills
+2. Say "Set up bookmark brain"
+
+The skill handles everything — cloning the repo, running setup, logging into X, and creating a daily scheduled task so your bookmarks sync automatically.
+
+## Manual Install
 
 ```bash
 git clone https://github.com/yebe-abe/bookmark-brain
@@ -19,12 +26,14 @@ npm run setup
 ```bash
 bookmark-brain login          # sign in with X (opens browser)
 bookmark-brain                # pull new bookmarks, process, save as markdown, exit
+bookmark-brain schedule 7am   # run every day at 7am (uses cron)
+bookmark-brain schedule off   # stop scheduled runs
 bookmark-brain --watch        # keep polling every 60s (instead of one-shot)
 ```
 
 ## Output
 
-Each bookmark becomes a markdown file with YAML frontmatter:
+Each bookmark becomes a markdown file in `~/.bookmark-brain/bookmarks/`:
 
 ```markdown
 ---
@@ -35,13 +44,7 @@ url: "https://x.com/karpathy/status/123456"
 tags: [rag, chunking, retrieval]
 ---
 
-# Chunking strategies for RAG pipelines
-
-> Original tweet text here...
-
-Summary of the key insight.
-
-**Apply when:** Building a RAG pipeline and retrieval quality is low.
+Original tweet text here...
 
 ## Concepts
 - semantic chunking (technique)
@@ -49,6 +52,8 @@ Summary of the key insight.
 ## Entities
 - Andrej Karpathy @karpathy (person)
 ```
+
+X Articles (long-form posts) are saved with their full content. Linked articles are fetched and included when possible.
 
 ```
 ~/.bookmark-brain/
