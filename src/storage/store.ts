@@ -11,6 +11,8 @@ export interface PendingItem {
   url: string | null;
   createdAt: string;
   expandedUrls: string[];
+  articleTitle: string | null;
+  articleText: string | null;
 }
 
 export interface Concept {
@@ -93,6 +95,8 @@ export async function ingestItem(opts: {
   url: string | null;
   createdAt: string;
   expandedUrls: string[];
+  articleTitle: string | null;
+  articleText: string | null;
 }): Promise<PendingItem | null> {
   await load();
 
@@ -107,6 +111,8 @@ export async function ingestItem(opts: {
     url: opts.url,
     createdAt: opts.createdAt,
     expandedUrls: opts.expandedUrls || [],
+    articleTitle: opts.articleTitle || null,
+    articleText: opts.articleText || null,
   };
   pending!.push(item);
 
@@ -178,16 +184,27 @@ function renderMarkdown(item: PendingItem, result: ProcessedResult): string {
   lines.push("---");
   lines.push("");
 
-  if (item.text) {
-    for (const line of item.text.split("\n")) {
-      lines.push(`> ${line}`);
+  if (item.articleText) {
+    // X Article: tweet text as a short quote, article as the body
+    if (item.text && item.text !== item.articleText) {
+      for (const line of item.text.split("\n")) {
+        lines.push(`> ${line}`);
+      }
+      lines.push("");
     }
+    lines.push(item.articleText);
     lines.push("");
-  }
-
-  if (result.articleContent) {
-    lines.push(result.articleContent);
-    lines.push("");
+  } else {
+    // Regular tweet: tweet text as the body
+    if (item.text) {
+      lines.push(item.text);
+      lines.push("");
+    }
+    // Extracted article content from URL (if any)
+    if (result.articleContent) {
+      lines.push(result.articleContent);
+      lines.push("");
+    }
   }
 
   if (result.concepts.length) {

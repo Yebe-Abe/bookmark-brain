@@ -11,7 +11,19 @@ async function processOne(item: PendingItem): Promise<void> {
   console.log(`[processor] processing ${item.sourceId}`);
 
   try {
-    const result = await processBookmark(item.text, item.expandedUrls || []);
+    // For X Articles, send title + first ~2000 chars for metadata extraction
+    // (the full text is already stored in item.articleText)
+    let textForProcessing = item.text;
+    if (item.articleTitle && item.articleText) {
+      textForProcessing = `${item.articleTitle}\n\n${item.articleText.slice(0, 2000)}`;
+    }
+    const result = await processBookmark(textForProcessing, item.expandedUrls || []);
+
+    // For articles, use the article title from X if Claude's title is generic
+    if (item.articleTitle && result.title.toLowerCase().includes("link")) {
+      result.title = item.articleTitle;
+    }
+
     await saveProcessedItem(item, result);
     console.log(`[processor] done: "${result.title}"`);
   } catch (err) {

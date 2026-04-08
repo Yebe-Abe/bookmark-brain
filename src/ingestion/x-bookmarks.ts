@@ -179,35 +179,34 @@ export async function pollBookmarks(): Promise<number> {
   for (const tweet of tweets) {
     const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
 
-    // Use article plain_text for X Articles, note_tweet for long tweets, fall back to text
-    const fullText = (tweet.article as any)?.plain_text || tweet.note_tweet?.text || tweet.text;
+    // Use note_tweet for long tweets, fall back to text
+    const tweetText = tweet.note_tweet?.text || tweet.text;
 
-    // Log article field if present
-    if (tweet.article) {
-      console.log(`[x-bookmarks] tweet ${tweet.id} article:`, JSON.stringify(tweet.article));
-    }
+    // Extract article content if present (X Articles / long-form posts)
+    const articleTitle = (tweet.article as any)?.title || null;
+    const articleText = (tweet.article as any)?.plain_text || null;
 
     // Extract expanded URLs from entities (resolved by X)
-    const rawEntities = tweet.entities?.urls || [];
-    console.log(`[x-bookmarks] tweet ${tweet.id} entities.urls:`, JSON.stringify(rawEntities));
-    const expandedUrls = rawEntities
+    const expandedUrls = (tweet.entities?.urls || [])
       .map((u) => u.expanded_url)
       .filter(Boolean);
 
     const result = await ingestItem({
       sourceId: tweet.id,
-      text: fullText,
+      text: tweetText,
       author: author ? `@${author.username}` : null,
       url: author
         ? `https://x.com/${author.username}/status/${tweet.id}`
         : null,
       createdAt: tweet.created_at || new Date().toISOString(),
       expandedUrls,
+      articleTitle,
+      articleText,
     });
 
     if (result) {
       ingested++;
-      console.log(`[x-bookmarks] ingested: ${tweet.text.slice(0, 80)}...`);
+      console.log(`[x-bookmarks] ingested: ${(articleTitle || tweetText).slice(0, 80)}...`);
     }
   }
 
